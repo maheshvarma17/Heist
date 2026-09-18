@@ -10,6 +10,8 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GameState } from './GameState.js';
 import { Bank } from './Bank.js';
 import { Crew } from '../entities/Crew.js';
+import { MovementSystem } from '../systems/MovementSystem.js';
+import { NAV_POINTS } from './NavigationPoints.js';
 import {
   CAMERA_FOV,
   CAMERA_NEAR,
@@ -35,6 +37,10 @@ export class Game {
     this._initLighting();
     this._initBank();
     this._initCrew();
+    this._initMovement();
+
+    // ── DEV TEST (Milestone 4) — remove for production ──
+    this._devTestMovement();
 
     window.addEventListener('resize', () => this._onResize());
     this._onResize(); // set initial size
@@ -121,6 +127,24 @@ export class Game {
     this.crew.addToScene(this.scene);
   }
 
+  /* ── Movement System ───────────────────────────── */
+  _initMovement() {
+    this.movement = new MovementSystem();
+  }
+
+  /* ── DEV TEST (Milestone 4) ────────────────────── */
+  /* Moves each crew member to a different room after
+     a short delay.  Remove this method and its call
+     in the constructor once the planning UI exists.  */
+  _devTestMovement() {
+    setTimeout(() => {
+      this.movement.moveTo(this.crew.thief,      NAV_POINTS.office,       (c) => console.log(`[DEV] ${c.name} arrived at Office`));
+      this.movement.moveTo(this.crew.hacker,     NAV_POINTS.securityRoom, (c) => console.log(`[DEV] ${c.name} arrived at Security`));
+      this.movement.moveTo(this.crew.distractor, NAV_POINTS.hallway,      (c) => console.log(`[DEV] ${c.name} arrived at Hallway`));
+      this.movement.moveTo(this.crew.enforcer,   NAV_POINTS.vault,        (c) => console.log(`[DEV] ${c.name} arrived at Vault`));
+    }, 2000);
+  }
+
   /* ── Resize Handler ────────────────────────────── */
   _onResize() {
     const width  = window.innerWidth;
@@ -144,8 +168,8 @@ export class Game {
     // Update orbit controls damping
     this.controls.update();
 
-    // (Future: update entities, systems, UI here using `delta`)
-    void delta;
+    // Update systems
+    this.movement.update(delta);
 
     this.renderer.render(this.scene, this.camera);
   }
