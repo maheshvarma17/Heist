@@ -7,11 +7,13 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 
-import { GameState } from './GameState.js';
+import { GameState, PHASES } from './GameState.js';
 import { Bank } from './Bank.js';
 import { Crew } from '../entities/Crew.js';
 import { MovementSystem } from '../systems/MovementSystem.js';
-import { NAV_POINTS } from './NavigationPoints.js';
+import { ActionQueue } from '../systems/ActionQueue.js';
+import { ActionSystem } from '../systems/ActionSystem.js';
+import { PlannerUI } from '../ui/PlannerUI.js';
 import {
   CAMERA_FOV,
   CAMERA_NEAR,
@@ -38,9 +40,11 @@ export class Game {
     this._initBank();
     this._initCrew();
     this._initMovement();
+    this._initActions();
+    this._initPlannerUI();
 
-    // ── DEV TEST (Milestone 4) — remove for production ──
-    this._devTestMovement();
+    // Start in PLANNING phase
+    this._enterPlanning();
 
     window.addEventListener('resize', () => this._onResize());
     this._onResize(); // set initial size
@@ -132,17 +136,64 @@ export class Game {
     this.movement = new MovementSystem();
   }
 
-  /* ── DEV TEST (Milestone 4) ────────────────────── */
-  /* Moves each crew member to a different room after
-     a short delay.  Remove this method and its call
-     in the constructor once the planning UI exists.  */
-  _devTestMovement() {
-    setTimeout(() => {
-      this.movement.moveTo(this.crew.thief,      NAV_POINTS.office,       (c) => console.log(`[DEV] ${c.name} arrived at Office`));
-      this.movement.moveTo(this.crew.hacker,     NAV_POINTS.securityRoom, (c) => console.log(`[DEV] ${c.name} arrived at Security`));
-      this.movement.moveTo(this.crew.distractor, NAV_POINTS.hallway,      (c) => console.log(`[DEV] ${c.name} arrived at Hallway`));
-      this.movement.moveTo(this.crew.enforcer,   NAV_POINTS.vault,        (c) => console.log(`[DEV] ${c.name} arrived at Vault`));
-    }, 2000);
+  /* ── Action System ─────────────────────────────── */
+  _initActions() {
+    this.actions = new ActionSystem(this.movement);
+
+    /** Per-character ActionQueues, keyed by role. */
+    this.queues = new Map();
+    for (const member of this.crew.members) {
+      const q = new ActionQueue();
+      this.queues.set(member.role, q);
+      this.actions.register(member, q);
+    }
+  }
+
+  /* ── Planner UI ────────────────────────────────── */
+  _initPlannerUI() {
+    this.plannerUI = new PlannerUI(this.crew, this.queues, {
+      onExecute:  () => this._enterExecution(),
+      onPlanAgain: () => this._enterPlanning(),
+    });
+  }
+
+  /* ═══════════════════════════════════════════════════
+     Phase Transitions
+     ═══════════════════════════════════════════════════ */
+
+  /** Transition to PLANNING phase. */
+  _enterPlanning() {
+    this.state.phase = PHASES.PLANNING;
+
+    // Abort any in-progress execution
+    this.actions.abort();
+
+    // Clear all queues
+    for (const q of this.queues.values()) q.clear();
+
+    // Reset characters to the lobby spawn positions
+    this.crew.resetPositions();
+
+    // Show planner UI
+    this.plannerUI.show();
+    this.plannerUI.hideStatus();
+  }
+
+  /** Transition to EXECUTING phase. */
+  _enterExecution() {
+    this.state.phase = PHASES.EXECUTING;
+
+    this.plannerUI.hide();
+    this.plannerUI.showStatus('EXECUTING…');
+
+    this.actions.execute(() => this._onExecutionComplete());
+  }
+
+  /** Called when all action queues are finished. */
+  _onExecutionComplete() {
+    this.state.phase = PHASES.RESULT;
+    this.plannerUI.hideStatus();
+    this.plannerUI.showComplete();
   }
 
   /* ── Resize Handler ────────────────────────────── */
@@ -170,6 +221,7 @@ export class Game {
 
     // Update systems
     this.movement.update(delta);
+    this.actions.update(delta);
 
     this.renderer.render(this.scene, this.camera);
   }

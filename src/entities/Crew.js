@@ -17,10 +17,17 @@ export class Crew {
 
     // Spawn positions inside the lobby, near the entrance (z ≈ 20),
     // evenly spaced along X, facing north (toward bank interior).
-    this.thief      = new Thief(new THREE.Vector3(-4,    0, 19.5));
-    this.hacker     = new Hacker(new THREE.Vector3(-1.5, 0, 19.5));
-    this.distractor = new Distractor(new THREE.Vector3(1.5, 0, 19.5));
-    this.enforcer   = new Enforcer(new THREE.Vector3(4,   0, 19.5));
+    this._spawnPositions = [
+      new THREE.Vector3(-4,    0, 19.5),
+      new THREE.Vector3(-1.5,  0, 19.5),
+      new THREE.Vector3( 1.5,  0, 19.5),
+      new THREE.Vector3( 4,    0, 19.5),
+    ];
+
+    this.thief      = new Thief(this._spawnPositions[0].clone());
+    this.hacker     = new Hacker(this._spawnPositions[1].clone());
+    this.distractor = new Distractor(this._spawnPositions[2].clone());
+    this.enforcer   = new Enforcer(this._spawnPositions[3].clone());
 
     /** All crew members as an iterable array. */
     this.members = [
@@ -34,6 +41,14 @@ export class Crew {
     for (const member of this.members) {
       member.addToScene(this.group);
     }
+  }
+
+  /** Reset all crew members to their lobby spawn positions. */
+  resetPositions() {
+    this.members.forEach((member, i) => {
+      member.group.position.copy(this._spawnPositions[i]);
+      member.group.rotation.y = 0;
+    });
   }
 
   /** Add the entire crew into a Three.js scene or group. */
