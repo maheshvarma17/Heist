@@ -78,8 +78,12 @@ export class PlannerUI {
     this._statusBar.classList.remove('visible');
   }
 
-  /** Show the "Plan Complete" overlay. */
-  showComplete() {
+  /**
+   * Show the result overlay.
+   * @param {{ type: 'success'|'timeout', remaining?: number }} result
+   */
+  showComplete(result = { type: 'success', remaining: 0 }) {
+    this._updateOverlay(result);
     this._overlay.classList.add('visible');
   }
 
@@ -246,8 +250,9 @@ export class PlannerUI {
 
     overlay.innerHTML = `
       <div class="complete-box">
-        <h2>PLAN COMPLETE</h2>
-        <p>All crew members have finished their actions.</p>
+        <h2 id="result-title">HEIST COMPLETE</h2>
+        <p id="result-subtitle">All crew members have finished their actions.</p>
+        <p id="result-detail" class="result-detail"></p>
         <button id="plan-again-btn">↻&ensp;PLAN AGAIN</button>
       </div>
     `;
@@ -257,6 +262,29 @@ export class PlannerUI {
 
     document.body.appendChild(overlay);
     this._overlay = overlay;
+  }
+
+  /** Update overlay content based on result type. */
+  _updateOverlay(result) {
+    const titleEl    = this._overlay.querySelector('#result-title');
+    const subtitleEl = this._overlay.querySelector('#result-subtitle');
+    const detailEl   = this._overlay.querySelector('#result-detail');
+    const box        = this._overlay.querySelector('.complete-box');
+
+    box.classList.remove('success', 'timeout');
+
+    if (result.type === 'timeout') {
+      box.classList.add('timeout');
+      titleEl.textContent    = "TIME'S UP";
+      subtitleEl.textContent = 'The 60 seconds are over.';
+      detailEl.textContent   = '';
+    } else {
+      box.classList.add('success');
+      titleEl.textContent    = 'HEIST COMPLETE';
+      subtitleEl.textContent = 'All actions executed successfully.';
+      const secs = result.remaining != null ? result.remaining.toFixed(1) : '0.0';
+      detailEl.textContent   = `Time remaining: ${secs}s`;
+    }
   }
 
   _hideOverlay() {
@@ -523,13 +551,30 @@ const PLANNER_CSS = `
 .complete-box h2 {
   font-size: 1.5rem;
   letter-spacing: 0.25em;
-  color: #f0c040;
   margin-bottom: 8px;
+}
+.complete-box.success h2 {
+  color: #44dd66;
+}
+.complete-box.timeout h2 {
+  color: #ff4444;
 }
 .complete-box p {
   font-size: 0.85rem;
   color: #999;
-  margin-bottom: 20px;
+  margin-bottom: 6px;
+}
+.result-detail {
+  font-size: 1rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  margin-bottom: 16px !important;
+}
+.complete-box.success .result-detail {
+  color: #44dd66;
+}
+.complete-box.timeout .result-detail {
+  color: #ff4444;
 }
 #plan-again-btn {
   background: linear-gradient(135deg, #f0c040, #d4a020);

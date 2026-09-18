@@ -13,7 +13,9 @@ import { Crew } from '../entities/Crew.js';
 import { MovementSystem } from '../systems/MovementSystem.js';
 import { ActionQueue } from '../systems/ActionQueue.js';
 import { ActionSystem } from '../systems/ActionSystem.js';
+import { HeistTimer } from '../systems/HeistTimer.js';
 import { PlannerUI } from '../ui/PlannerUI.js';
+import { TimerHUD } from '../ui/TimerHUD.js';
 import {
   CAMERA_FOV,
   CAMERA_NEAR,
@@ -41,7 +43,9 @@ export class Game {
     this._initCrew();
     this._initMovement();
     this._initActions();
+    this._initTimer();
     this._initPlannerUI();
+    this._initTimerHUD();
 
     // Start in PLANNING phase
     this._enterPlanning();
@@ -157,6 +161,16 @@ export class Game {
     });
   }
 
+  /* ── Heist Timer ───────────────────────────────── */
+  _initTimer() {
+    this.timer = new HeistTimer(() => this._onTimeout());
+  }
+
+  /* ── Timer HUD ─────────────────────────────────── */
+  _initTimerHUD() {
+    this.timerHUD = new TimerHUD();
+  }
+
   /* ═══════════════════════════════════════════════════
      Phase Transitions
      ═══════════════════════════════════════════════════ */
@@ -164,6 +178,9 @@ export class Game {
   /** Transition to PLANNING phase. */
   _enterPlanning() {
     this.state.phase = PHASES.PLANNING;
+
+    // Stop & reset timer
+    this.timer.reset();
 
     // Abort any in-progress execution
     this.actions.abort();
@@ -174,9 +191,11 @@ export class Game {
     // Reset characters to the lobby spawn positions
     this.crew.resetPositions();
 
-    // Show planner UI
+    // Show planner UI, update timer HUD to 60
     this.plannerUI.show();
     this.plannerUI.hideStatus();
+    this.timerHUD.update(this.timer.remaining);
+    this.timerHUD.show();
   }
 
   /** Transition to EXECUTING phase. */
@@ -186,14 +205,37 @@ export class Game {
     this.plannerUI.hide();
     this.plannerUI.showStatus('EXECUTING…');
 
+    // Start the 60-second countdown
+    this.timer.start();
+
+    // Begin executing all action queues
     this.actions.execute(() => this._onExecutionComplete());
   }
 
-  /** Called when all action queues are finished. */
+  /** Called when all action queues finish before timeout. */
   _onExecutionComplete() {
+    // Ignore if already timed out
+    if (this.timer.timedOut) return;
+
     this.state.phase = PHASES.RESULT;
+    this.timer.stop();
+
     this.plannerUI.hideStatus();
-    this.plannerUI.showComplete();
+    this.plannerUI.showComplete({
+      type: 'success',
+      remaining: this.timer.remaining,
+    });
+  }
+
+  /** Called when the 60-second timer reaches zero. */
+  _onTimeout() {
+    this.state.phase = PHASES.RESULT;
+
+    // Stop all character movement and action execution
+    this.actions.abort();
+
+    this.plannerUI.hideStatus();
+    this.plannerUI.showComplete({ type: 'timeout' });
   }
 
   /* ── Resize Handler ────────────────────────────── */
@@ -218,6 +260,12 @@ export class Game {
 
     // Update orbit controls damping
     this.controls.update();
+
+    // Update timer
+    if (this.state.phase === PHASES.EXECUTING) {
+      this.timer.update(delta);
+      this.timerHUD.update(this.timer.remaining);
+    }
 
     // Update systems
     this.movement.update(delta);
