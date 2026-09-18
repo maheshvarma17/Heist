@@ -9,6 +9,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 
 import { GameState } from './GameState.js';
 import { Bank } from './Bank.js';
+import { Crew } from '../entities/Crew.js';
 import {
   CAMERA_FOV,
   CAMERA_NEAR,
@@ -33,6 +34,7 @@ export class Game {
     this._initControls();
     this._initLighting();
     this._initBank();
+    this._initCrew();
 
     window.addEventListener('resize', () => this._onResize());
     this._onResize(); // set initial size
@@ -111,6 +113,12 @@ export class Game {
   _initBank() {
     this.bank = new Bank();
     this.bank.addToScene(this.scene);
+  }
+
+  /* ── Crew Members ──────────────────────────────── */
+  _initCrew() {
+    this.crew = new Crew();
+    this.crew.addToScene(this.scene);
   }
 
   /* ── Resize Handler ────────────────────────────── */
