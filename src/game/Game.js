@@ -229,10 +229,31 @@ export class Game {
 
   /* ── Planner UI ────────────────────────────────── */
   _initPlannerUI() {
-    this.plannerUI = new PlannerUI(this.crew, this.queues, {
-      onExecute:  () => this._enterExecution(),
-      onPlanAgain: () => this._enterPlanning(),
-    });
+    this.plannerUI = new PlannerUI(
+      this.crew,
+      this.queues,
+      {
+        onExecute:   () => this._enterExecution(),
+        onPlanAgain: () => this._enterPlanning(),
+      },
+      this.multiplayerClient,
+    );
+
+    if (this.multiplayerClient) {
+      this.multiplayerClient.on('executionStarting', (data) => {
+        console.log('[HEIST] Synchronized execution starting with team plan:', data.teamPlan);
+        if (data.teamPlan) {
+          for (const [roleUpper, actions] of Object.entries(data.teamPlan)) {
+            const queue = this.queues.get(roleUpper.toLowerCase());
+            if (queue) {
+              queue.clear();
+              for (const a of actions) queue.addAction(a);
+            }
+          }
+        }
+        this._enterExecution();
+      });
+    }
   }
 
   /* ── Heist Timer ───────────────────────────────── */

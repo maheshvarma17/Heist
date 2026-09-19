@@ -1,7 +1,7 @@
 /**
  * PlannerUI.js
  * DOM-based planning panel for assigning actions to crew members.
- * Redesigned with a modern Light UI Strategy Theme.
+ * Supports real-time shared team planning, role ownership, planning ready states, and synchronized execution.
  */
 
 import { ROOM_LABELS } from '../systems/ActionSystem.js';
@@ -28,12 +28,14 @@ export class PlannerUI {
    * @param {Map<string, import('../systems/ActionQueue.js').ActionQueue>} queues
    *        – keyed by role name (e.g. 'thief')
    * @param {{ onExecute: Function, onPlanAgain: Function }} callbacks
+   * @param {import('../multiplayer/MultiplayerClient.js').MultiplayerClient} [client]
    */
-  constructor(crew, queues, callbacks) {
+  constructor(crew, queues, callbacks, client = null) {
     this._crew      = crew;
     this._queues    = queues;          // role → ActionQueue
     this._onExecute = callbacks.onExecute;
     this._onPlanAgain = callbacks.onPlanAgain;
+    this._client    = client;
 
     /** @type {Object.<string, HTMLElement>} */
     this._listEls   = {};              // role → action-list <div>
@@ -44,10 +46,21 @@ export class PlannerUI {
     this._cards      = {};             // role -> card <div>
     this._localRole  = null;
     this._players    = [];
+    this._planningReadyMap = {};
+    this._isPlanningReady = false;
 
     this._injectStyles();
     this._buildPanel();
     this._buildOverlay();
+
+    if (this._client) {
+      this._bindMultiplayerEvents();
+    }
+  }
+
+  setClient(client) {
+    this._client = client;
+    this._bindMultiplayerEvents();
   }
 
   // ─── Public ────────────────────────────────────────────
@@ -60,7 +73,10 @@ export class PlannerUI {
   setLocalRole(localRole, players = []) {
     this._localRole = localRole ? localRole.toLowerCase() : null;
     this._players = players;
+    this._isPlanningReady = false;
+    this._planningReadyMap = {};
     this._rebuildCards();
+    this._updateButtons();
   }
 
   /** Show the planning panel (PLANNING phase). */
@@ -68,6 +84,7 @@ export class PlannerUI {
     this._panel.classList.add('visible');
     this._hideOverlay();
     this._refresh();
+    this._updateButtons();
   }
 
   /** Hide the planning panel (EXECUTING phase). */
@@ -100,6 +117,7 @@ export class PlannerUI {
     for (const member of this._crew.members) {
       this._renderActions(member.role);
     }
+    this._updateButtons();
   }
 
   // ─── Build Panel ───────────────────────────────────────
@@ -111,7 +129,7 @@ export class PlannerUI {
     // ── Title ──
     const title = document.createElement('div');
     title.className = 'planner-title';
-    title.innerHTML = '<h2>HEIST PLANNER</h2><p>Assign actions, then execute.</p>';
+    title.innerHTML = '<h2>TEAM PLANNER</h2><p>Coordinate crew actions and synchronize execution.</p>';
     panel.appendChild(title);
 
     // ── Character cards ──
@@ -123,18 +141,43 @@ export class PlannerUI {
     }
     panel.appendChild(this._cardsWrap);
 
-    // ── Execute button ──
+    // ── Planning Actions Footer ──
+    const footer = document.createElement('div');
+    footer.className = 'planner-footer';
+
+    // Ready toggle button (for multiplayer)
+    const readyBtn = document.createElement('button');
+    readyBtn.id = 'planning-ready-btn';
+    readyBtn.className = 'btn btn-secondary';
+    readyBtn.textContent = '✓ READY FOR HEIST';
+    readyBtn.addEventListener('click', () => {
+      if (this._client && this._localRole) {
+        this._client.setPlanningReady(!this._isPlanningReady);
+      }
+    });
+    footer.appendChild(readyBtn);
+    this._readyBtn = readyBtn;
+
+    // Execute button
     const execBtn = document.createElement('button');
     execBtn.id = 'execute-btn';
     execBtn.className = 'btn btn-primary';
     execBtn.innerHTML = '▶&ensp;EXECUTE HEIST';
     execBtn.addEventListener('click', () => {
-      // Only execute if at least one character has actions
-      const hasAny = this._crew.members.some(m => this._queues.get(m.role).hasActions());
-      if (!hasAny) return;
-      this._onExecute();
+      if (this._client && this._localRole) {
+        // In multiplayer, host triggers synchronized startExecution
+        this._client.startExecution();
+      } else {
+        // Single player local execution
+        const hasAny = this._crew.members.some(m => this._queues.get(m.role).hasActions());
+        if (!hasAny) return;
+        this._onExecute();
+      }
     });
-    panel.appendChild(execBtn);
+    footer.appendChild(execBtn);
+    this._execBtn = execBtn;
+
+    panel.appendChild(footer);
 
     document.body.appendChild(panel);
     this._panel = panel;
@@ -164,12 +207,13 @@ export class PlannerUI {
     const isOwned = !this._localRole || (role.toLowerCase() === this._localRole);
     const assignedPlayer = this._players.find(p => p.role === role.toUpperCase());
     const playerName = assignedPlayer ? assignedPlayer.name : member.name;
+    const isPlayerReady = assignedPlayer ? Boolean(this._planningReadyMap[assignedPlayer.id]) : false;
 
     const card = document.createElement('div');
     card.className = `crew-card ${isOwned ? 'is-owned' : 'is-remote'}`;
     card.style.setProperty('--card-accent', accent);
-    if (!isOwned) {
-      card.style.opacity = '0.75';
+    if (!isOwned && this._localRole) {
+      card.style.opacity = '0.85';
     }
 
     // ── Header ──
@@ -178,9 +222,15 @@ export class PlannerUI {
     
     let badgeHtml = '';
     if (this._localRole) {
-      badgeHtml = isOwned 
+      const youBadge = isOwned 
         ? '<span class="badge" style="background:#e0f2fe; color:#0369a1; border:1px solid #bae6fd; font-size:0.65rem;">YOU</span>'
         : '<span class="badge badge-not-ready" style="font-size:0.65rem;">TEAM</span>';
+
+      const readyBadge = isPlayerReady
+        ? '<span class="badge badge-ready" style="font-size:0.62rem;">✓ READY</span>'
+        : '<span class="badge badge-not-ready" style="font-size:0.62rem;">PLANNING</span>';
+
+      badgeHtml = `${youBadge} ${readyBadge}`;
     }
 
     header.innerHTML = `
@@ -217,22 +267,46 @@ export class PlannerUI {
       moveBtn.className = 'add-btn move-btn';
       moveBtn.textContent = '+ MOVE';
       moveBtn.addEventListener('click', () => {
-        queue.addAction({ type: 'MOVE', target: select.value });
-        this._renderActions(role);
+        const action = { type: 'MOVE', target: select.value };
+        if (this._client && this._localRole) {
+          this._client.addAction(role.toUpperCase(), action);
+        } else {
+          queue.addAction(action);
+          this._renderActions(role);
+        }
       });
 
       // +WAIT button
       const waitBtn = document.createElement('button');
       waitBtn.className = 'add-btn wait-btn';
-      waitBtn.textContent = '+ WAIT';
+      waitBtn.textContent = '+ WAIT (2s)';
       waitBtn.addEventListener('click', () => {
-        queue.addAction({ type: 'WAIT', duration: 2 });
-        this._renderActions(role);
+        const action = { type: 'WAIT', duration: 2 };
+        if (this._client && this._localRole) {
+          this._client.addAction(role.toUpperCase(), action);
+        } else {
+          queue.addAction(action);
+          this._renderActions(role);
+        }
+      });
+
+      // CLEAR button
+      const clearBtn = document.createElement('button');
+      clearBtn.className = 'add-btn clear-btn';
+      clearBtn.textContent = 'CLEAR';
+      clearBtn.addEventListener('click', () => {
+        if (this._client && this._localRole) {
+          this._client.clearActions(role.toUpperCase());
+        } else {
+          queue.clear();
+          this._renderActions(role);
+        }
       });
 
       controls.appendChild(select);
       controls.appendChild(moveBtn);
       controls.appendChild(waitBtn);
+      controls.appendChild(clearBtn);
     } else {
       controls.innerHTML = `<span style="font-size: 0.72rem; color: var(--color-text-muted); font-style: italic; padding: 4px 0;">Controlled by ${playerName}</span>`;
     }
@@ -276,14 +350,110 @@ export class PlannerUI {
         removeBtn.textContent = '×';
         removeBtn.title = 'Remove action';
         removeBtn.addEventListener('click', () => {
-          queue.removeAction(i);
-          this._renderActions(role);
+          if (this._client && this._localRole) {
+            this._client.removeAction(role.toUpperCase(), i, action.id);
+          } else {
+            queue.removeAction(i);
+            this._renderActions(role);
+          }
         });
         row.appendChild(removeBtn);
       }
 
       list.appendChild(row);
     });
+  }
+
+  _updateButtons() {
+    if (!this._readyBtn || !this._execBtn) return;
+
+    if (!this._localRole) {
+      // Single player mode: hide ready button, enable execute if actions present
+      this._readyBtn.style.display = 'none';
+      this._execBtn.style.display = 'block';
+      const hasAny = this._crew.members.some(m => this._queues.get(m.role).hasActions());
+      this._execBtn.disabled = !hasAny;
+      this._execBtn.textContent = '▶ EXECUTE HEIST';
+      return;
+    }
+
+    // Multiplayer mode
+    this._readyBtn.style.display = 'inline-flex';
+    this._readyBtn.className = this._isPlanningReady ? 'btn btn-success' : 'btn btn-secondary';
+    this._readyBtn.textContent = this._isPlanningReady ? '✓ READY' : 'READY FOR HEIST';
+
+    const isHost = this._client ? this._client.state.isHost() : false;
+    const hasAnyAction = this._crew.members.some(m => this._queues.get(m.role).hasActions());
+    const allPlanningReady = this._players.length > 0 && this._players.every(p => Boolean(this._planningReadyMap[p.id]));
+
+    if (isHost) {
+      this._execBtn.style.display = 'block';
+      this._execBtn.disabled = !(allPlanningReady && hasAnyAction);
+      this._execBtn.innerHTML = '▶&ensp;EXECUTE HEIST';
+      if (!allPlanningReady) {
+        this._execBtn.title = 'Waiting for all operatives to declare READY';
+      } else if (!hasAnyAction) {
+        this._execBtn.title = 'Plan at least one action to execute';
+      } else {
+        this._execBtn.title = 'Start synchronized heist execution!';
+      }
+    } else {
+      this._execBtn.style.display = 'none';
+    }
+  }
+
+  // ─── Multiplayer Event Binding ──────────────────────────
+
+  _bindMultiplayerEvents() {
+    if (!this._client) return;
+
+    this._client.on('teamPlanUpdated', (data) => {
+      this._applyTeamPlan(data.teamPlan);
+      if (data.planningReady) {
+        this._planningReadyMap = data.planningReady;
+        const localPlayer = this._client.state.getLocalPlayer();
+        if (localPlayer) {
+          this._isPlanningReady = Boolean(this._planningReadyMap[localPlayer.id]);
+        }
+      }
+      this._rebuildCards();
+      this._updateButtons();
+    });
+
+    this._client.on('teamPlanSnapshot', (data) => {
+      this._applyTeamPlan(data.teamPlan);
+      if (data.planningReady) {
+        this._planningReadyMap = data.planningReady;
+        const localPlayer = this._client.state.getLocalPlayer();
+        if (localPlayer) {
+          this._isPlanningReady = Boolean(this._planningReadyMap[localPlayer.id]);
+        }
+      }
+      this._rebuildCards();
+      this._updateButtons();
+    });
+
+    this._client.on('planningReadyUpdated', (data) => {
+      this._planningReadyMap = data.planningReady || this._planningReadyMap;
+      const localPlayer = this._client.state.getLocalPlayer();
+      if (localPlayer && data.playerId === localPlayer.id) {
+        this._isPlanningReady = data.isReady;
+      }
+      this._rebuildCards();
+      this._updateButtons();
+    });
+  }
+
+  _applyTeamPlan(teamPlan = {}) {
+    for (const [roleUpper, actions] of Object.entries(teamPlan)) {
+      const queue = this._queues.get(roleUpper.toLowerCase());
+      if (queue) {
+        queue.clear();
+        for (const action of actions) {
+          queue.addAction(action);
+        }
+      }
+    }
   }
 
   // ─── Completion Overlay ────────────────────────────────
@@ -364,7 +534,7 @@ const PLANNER_CSS = `
 #planner-panel {
   position: fixed;
   top: 0; left: 0;
-  width: 350px;
+  width: 360px;
   height: 100vh;
   background: var(--color-surface);
   border-right: 1px solid var(--color-border);
@@ -417,11 +587,12 @@ const PLANNER_CSS = `
   border-radius: var(--radius-md);
   padding: 12px 14px;
   box-shadow: var(--shadow-sm);
+  transition: opacity var(--transition-fast), border-color var(--transition-fast);
 }
 .card-header {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   margin-bottom: 8px;
 }
 .accent-dot {
@@ -494,7 +665,7 @@ const PLANNER_CSS = `
 }
 .room-select {
   flex: 1;
-  min-width: 110px;
+  min-width: 100px;
   background: var(--color-surface);
   border: 1px solid var(--color-border-strong);
   border-radius: var(--radius-sm);
@@ -518,7 +689,7 @@ const PLANNER_CSS = `
   font-family: var(--font-family-base);
   font-size: 0.72rem;
   font-weight: 700;
-  padding: 6px 10px;
+  padding: 6px 8px;
   cursor: pointer;
   letter-spacing: 0.05em;
   transition: all var(--transition-fast);
@@ -530,15 +701,31 @@ const PLANNER_CSS = `
 }
 .move-btn:hover { border-color: var(--color-accent); color: var(--color-accent); }
 .wait-btn:hover { border-color: var(--color-text-secondary); }
+.clear-btn:hover { border-color: var(--color-danger); color: var(--color-danger); }
 
-/* ── Execute button ─────────────────────────────────── */
+/* ── Footer ─────────────────────────────────────────── */
+.planner-footer {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 10px;
+  border-top: 1px solid var(--color-border);
+}
+
+#planning-ready-btn {
+  width: 100%;
+  padding: 10px;
+  font-size: 0.85rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+}
+
 #execute-btn {
   width: 100%;
   padding: 12px;
   font-size: 0.95rem;
   font-weight: 800;
   letter-spacing: 0.12em;
-  flex-shrink: 0;
 }
 
 /* ══ Execution Status Bar ════════════════════════════ */

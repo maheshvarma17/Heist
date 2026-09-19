@@ -1,6 +1,6 @@
 /**
  * RoomManager.js
- * In-memory manager for multiplayer rooms and game sessions.
+ * In-memory manager for multiplayer rooms, game sessions, and shared team planning.
  */
 
 export const ROOM_STATUS = {
@@ -11,6 +11,19 @@ export const ROOM_STATUS = {
 export const VALID_ROLES = ['THIEF', 'HACKER', 'DISTRACTOR', 'ENFORCER'];
 
 export const VALID_CREW_STATES = ['IDLE', 'MOVING', 'WAITING', 'EXECUTING', 'COMPLETED'];
+
+export const VALID_ACTION_TYPES = ['MOVE', 'WAIT'];
+
+export const VALID_NAV_TARGETS = [
+  'lobby',
+  'vault',
+  'securityRoom',
+  'office',
+  'hallway',
+  'rooftop',
+  'frontExit',
+  'rooftopExit',
+];
 
 export const DEFAULT_SPAWN_POSITIONS = {
   THIEF:      { x: -4,   y: 0, z: 19.5 },
@@ -62,6 +75,13 @@ export class RoomManager {
       status: ROOM_STATUS.WAITING,
       players: [hostPlayer],
       crewStates: {},
+      teamPlan: {
+        THIEF: [],
+        HACKER: [],
+        DISTRACTOR: [],
+        ENFORCER: [],
+      },
+      planningReady: {},
       createdAt: Date.now(),
     };
 
@@ -154,9 +174,12 @@ export class RoomManager {
         removedPlayer.connected = false;
 
         if (room.status === ROOM_STATUS.PLAYING) {
-          // If in active gameplay, mark disconnected in crew state
+          // If in active gameplay, mark disconnected in crew state and planning ready
           if (room.crewStates[removedPlayer.id]) {
             room.crewStates[removedPlayer.id].connected = false;
+          }
+          if (room.planningReady) {
+            delete room.planningReady[removedPlayer.id];
           }
           // Remove from active players list
           room.players.splice(idx, 1);
@@ -228,7 +251,7 @@ export class RoomManager {
   }
 
   /**
-   * Set player ready status.
+   * Set player ready status in lobby.
    * @param {string} roomCode
    * @param {string} socketId
    * @param {boolean} isReady
@@ -250,10 +273,10 @@ export class RoomManager {
   }
 
   /**
-   * Validate and transition room to PLAYING, initializing crew states.
+   * Validate and transition room to PLAYING, initializing crew states and team plan.
    * @param {string} roomCode
    * @param {string} requesterSocketId
-   * @returns {{ success: boolean, room?: Object, error?: string, crewSnapshot?: Array }}
+   * @returns {{ success: boolean, room?: Object, error?: string, crewSnapshot?: Array, teamPlan?: Object }}
    */
   startGame(roomCode, requesterSocketId) {
     const room = this.getRoom(roomCode);
@@ -290,6 +313,14 @@ export class RoomManager {
 
     // Initialize authoritative crew states
     room.crewStates = {};
+    room.planningReady = {};
+    room.teamPlan = {
+      THIEF: [],
+      HACKER: [],
+      DISTRACTOR: [],
+      ENFORCER: [],
+    };
+
     for (const p of room.players) {
       const defaultPos = DEFAULT_SPAWN_POSITIONS[p.role] || { x: 0, y: 0, z: 0 };
       room.crewStates[p.id] = {
@@ -301,13 +332,217 @@ export class RoomManager {
         state: 'IDLE',
         connected: true,
       };
+      room.planningReady[p.id] = false;
     }
 
     return {
       success: true,
       room,
       crewSnapshot: Object.values(room.crewStates),
+      teamPlan: room.teamPlan,
     };
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // SHARED TEAM PLANNING METHODS (Milestone 11)
+  // ═══════════════════════════════════════════════════════════
+
+  /**
+   * Add an action to a player's role queue in the shared team plan.
+   * @param {string} roomCode
+   * @param {string} socketId
+   * @param {{ role: string, action: Object }} data
+   * @returns {{ success: boolean, teamPlan?: Object, planningReady?: Object, error?: string }}
+   */
+  addAction(roomCode, socketId, data = {}) {
+    const room = this.getRoom(roomCode);
+    if (!room) return { success: false, error: 'Room not found.' };
+    if (room.status !== ROOM_STATUS.PLAYING) return { success: false, error: 'Game is not in planning phase.' };
+
+    const player = room.players.find(p => p.socketId === socketId);
+    if (!player) return { success: false, error: 'Player not found in room.' };
+
+    const roleUpper = (data.role || '').toUpperCase();
+    if (roleUpper !== player.role) {
+      return { success: false, error: `Unauthorized: You can only add actions for your own role (${player.role}).` };
+    }
+
+    const action = data.action;
+    if (!action || !VALID_ACTION_TYPES.includes(action.type)) {
+      return { success: false, error: `Invalid action type. Allowed: ${VALID_ACTION_TYPES.join(', ')}` };
+    }
+
+    if (action.type === 'MOVE') {
+      if (!action.target || !VALID_NAV_TARGETS.includes(action.target)) {
+        return { success: false, error: `Invalid move destination. Target must be a valid room key.` };
+      }
+    } else if (action.type === 'WAIT') {
+      const duration = Number(action.duration);
+      if (!Number.isFinite(duration) || duration <= 0 || duration > 60) {
+        return { success: false, error: 'Wait duration must be between 1 and 60 seconds.' };
+      }
+    }
+
+    const cleanAction = {
+      id: action.id || `act_${Math.random().toString(36).substring(2, 9)}`,
+      type: action.type,
+      target: action.target || null,
+      duration: action.type === 'WAIT' ? (Number(action.duration) || 2) : null,
+      order: room.teamPlan[roleUpper].length,
+    };
+
+    room.teamPlan[roleUpper].push(cleanAction);
+    room.planningReady[player.id] = false; // Modifying plan un-readies the player
+
+    return {
+      success: true,
+      teamPlan: room.teamPlan,
+      planningReady: room.planningReady,
+      addedAction: cleanAction,
+    };
+  }
+
+  /**
+   * Remove an action from the player's role queue.
+   * @param {string} roomCode
+   * @param {string} socketId
+   * @param {{ role: string, index?: number, actionId?: string }} data
+   * @returns {{ success: boolean, teamPlan?: Object, planningReady?: Object, error?: string }}
+   */
+  removeAction(roomCode, socketId, data = {}) {
+    const room = this.getRoom(roomCode);
+    if (!room) return { success: false, error: 'Room not found.' };
+
+    const player = room.players.find(p => p.socketId === socketId);
+    if (!player) return { success: false, error: 'Player not found in room.' };
+
+    const roleUpper = (data.role || '').toUpperCase();
+    if (roleUpper !== player.role) {
+      return { success: false, error: `Unauthorized: You can only remove actions from your own role (${player.role}).` };
+    }
+
+    const queue = room.teamPlan[roleUpper];
+    if (!queue) return { success: false, error: 'Queue not found.' };
+
+    let removeIdx = -1;
+    if (typeof data.index === 'number' && data.index >= 0 && data.index < queue.length) {
+      removeIdx = data.index;
+    } else if (data.actionId) {
+      removeIdx = queue.findIndex(a => a.id === data.actionId);
+    }
+
+    if (removeIdx === -1) {
+      return { success: false, error: 'Action not found in queue.' };
+    }
+
+    queue.splice(removeIdx, 1);
+    // Re-index orders
+    queue.forEach((a, i) => { a.order = i; });
+
+    room.planningReady[player.id] = false;
+
+    return {
+      success: true,
+      teamPlan: room.teamPlan,
+      planningReady: room.planningReady,
+    };
+  }
+
+  /**
+   * Clear all actions for a player's role queue.
+   * @param {string} roomCode
+   * @param {string} socketId
+   * @param {{ role: string }} data
+   * @returns {{ success: boolean, teamPlan?: Object, planningReady?: Object, error?: string }}
+   */
+  clearActions(roomCode, socketId, data = {}) {
+    const room = this.getRoom(roomCode);
+    if (!room) return { success: false, error: 'Room not found.' };
+
+    const player = room.players.find(p => p.socketId === socketId);
+    if (!player) return { success: false, error: 'Player not found in room.' };
+
+    const roleUpper = (data.role || '').toUpperCase();
+    if (roleUpper !== player.role) {
+      return { success: false, error: `Unauthorized: You can only clear actions for your own role (${player.role}).` };
+    }
+
+    room.teamPlan[roleUpper] = [];
+    room.planningReady[player.id] = false;
+
+    return {
+      success: true,
+      teamPlan: room.teamPlan,
+      planningReady: room.planningReady,
+    };
+  }
+
+  /**
+   * Set planning ready state for a player.
+   * @param {string} roomCode
+   * @param {string} socketId
+   * @param {boolean} isReady
+   * @returns {{ success: boolean, planningReady?: Object, error?: string }}
+   */
+  setPlanningReady(roomCode, socketId, isReady) {
+    const room = this.getRoom(roomCode);
+    if (!room) return { success: false, error: 'Room not found.' };
+
+    const player = room.players.find(p => p.socketId === socketId);
+    if (!player) return { success: false, error: 'Player not found in room.' };
+
+    room.planningReady[player.id] = Boolean(isReady);
+
+    return {
+      success: true,
+      playerId: player.id,
+      isReady: Boolean(isReady),
+      planningReady: room.planningReady,
+    };
+  }
+
+  /**
+   * Start execution of the shared team plan (Host only).
+   * @param {string} roomCode
+   * @param {string} socketId
+   * @returns {{ success: boolean, teamPlan?: Object, error?: string }}
+   */
+  startExecution(roomCode, socketId) {
+    const room = this.getRoom(roomCode);
+    if (!room) return { success: false, error: 'Room not found.' };
+
+    const host = room.players.find(p => p.socketId === socketId);
+    if (!host || !host.isHost) {
+      return { success: false, error: 'Only the host can trigger heist execution.' };
+    }
+
+    // Check if there are planned actions across the team
+    const totalActions = Object.values(room.teamPlan).reduce((acc, q) => acc + q.length, 0);
+    if (totalActions === 0) {
+      return { success: false, error: 'Cannot execute empty team plan. At least one action must be planned.' };
+    }
+
+    // Check if all connected players in the room are ready
+    const allPlanningReady = room.players.every(p => !p.connected || room.planningReady[p.id]);
+    if (!allPlanningReady) {
+      return { success: false, error: 'All operatives must be READY before starting execution.' };
+    }
+
+    return {
+      success: true,
+      roomCode: room.code,
+      teamPlan: room.teamPlan,
+    };
+  }
+
+  /**
+   * Retrieve the current team plan for a room.
+   * @param {string} roomCode
+   * @returns {Object|null}
+   */
+  getTeamPlan(roomCode) {
+    const room = this.getRoom(roomCode);
+    return room ? room.teamPlan : null;
   }
 
   /**
@@ -415,6 +650,8 @@ export class RoomManager {
         isHost: p.isHost,
         isReady: p.isReady,
       })),
+      teamPlan: room.teamPlan,
+      planningReady: room.planningReady,
     };
   }
 }

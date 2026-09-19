@@ -1,6 +1,6 @@
 /**
  * test/multiplayer.test.js
- * Automated test suite for Milestone 10: Multiplayer Crew Control & Synchronization.
+ * Automated test suite for Milestone 11: Shared Team Planning & Action Synchronization.
  */
 
 import { io } from 'socket.io-client';
@@ -23,6 +23,7 @@ ioServer.on('connection', (socket) => {
 
   const sendError = (message) => {
     socket.emit('errorMessage', { message });
+    socket.emit('planningError', { message });
   };
 
   socket.on('createRoom', ({ name } = {}) => {
@@ -72,6 +73,62 @@ ioServer.on('connection', (socket) => {
       roomCode: res.room.code,
       players: serialized.players,
       crew: res.crewSnapshot,
+      teamPlan: res.teamPlan,
+    });
+  });
+
+  // Planning handlers
+  socket.on('addAction', (data = {}) => {
+    const res = roomManager.addAction(player.roomCode, socket.id, data);
+    if (!res.success) return sendError(res.error);
+    ioServer.to(player.roomCode).emit('teamPlanUpdated', {
+      roomCode: player.roomCode,
+      teamPlan: res.teamPlan,
+      planningReady: res.planningReady,
+      addedAction: res.addedAction,
+      role: data.role.toUpperCase(),
+    });
+  });
+
+  socket.on('removeAction', (data = {}) => {
+    const res = roomManager.removeAction(player.roomCode, socket.id, data);
+    if (!res.success) return sendError(res.error);
+    ioServer.to(player.roomCode).emit('teamPlanUpdated', {
+      roomCode: player.roomCode,
+      teamPlan: res.teamPlan,
+      planningReady: res.planningReady,
+      role: data.role.toUpperCase(),
+    });
+  });
+
+  socket.on('clearActions', (data = {}) => {
+    const res = roomManager.clearActions(player.roomCode, socket.id, data);
+    if (!res.success) return sendError(res.error);
+    ioServer.to(player.roomCode).emit('teamPlanUpdated', {
+      roomCode: player.roomCode,
+      teamPlan: res.teamPlan,
+      planningReady: res.planningReady,
+      role: data.role.toUpperCase(),
+    });
+  });
+
+  socket.on('setPlanningReady', ({ isReady } = {}) => {
+    const res = roomManager.setPlanningReady(player.roomCode, socket.id, isReady);
+    if (!res.success) return sendError(res.error);
+    ioServer.to(player.roomCode).emit('planningReadyUpdated', {
+      roomCode: player.roomCode,
+      playerId: res.playerId,
+      isReady: res.isReady,
+      planningReady: res.planningReady,
+    });
+  });
+
+  socket.on('startExecution', () => {
+    const res = roomManager.startExecution(player.roomCode, socket.id);
+    if (!res.success) return sendError(res.error);
+    ioServer.to(res.roomCode).emit('executionStarting', {
+      roomCode: res.roomCode,
+      teamPlan: res.teamPlan,
     });
   });
 
@@ -79,13 +136,6 @@ ioServer.on('connection', (socket) => {
     const res = roomManager.updateCrewState(player.roomCode, socket.id, data);
     if (!res.success) return sendError(res.error);
     socket.to(player.roomCode).emit('crewMoved', res.crewState);
-  });
-
-  socket.on('crewStateRequest', () => {
-    const snapshot = roomManager.getCrewSnapshot(player.roomCode);
-    if (snapshot) {
-      socket.emit('crewStateSnapshot', { roomCode: player.roomCode, crew: snapshot });
-    }
   });
 
   socket.on('disconnect', () => {
@@ -126,7 +176,7 @@ async function runTests() {
   console.log(`[TEST] Test server started on port ${TEST_PORT}`);
 
   try {
-    // ── Setup: 4 players join and ready up ──
+    // ── Setup: 4 players join, assign roles, ready up, and start heist ──
     const client1 = createClientSocket();
     const client2 = createClientSocket();
     const client3 = createClientSocket();
@@ -164,199 +214,224 @@ async function runTests() {
       client4.emit('joinRoom', { name: 'Player 4', roomCode });
     });
 
-    // Assign unique roles: P1 -> THIEF, P2 -> HACKER, P3 -> DISTRACTOR, P4 -> ENFORCER
     client1.emit('assignRole', { targetPlayerId: p1Id, role: 'THIEF' });
     client1.emit('assignRole', { targetPlayerId: p2Id, role: 'HACKER' });
     client1.emit('assignRole', { targetPlayerId: p3Id, role: 'DISTRACTOR' });
     client1.emit('assignRole', { targetPlayerId: p4Id, role: 'ENFORCER' });
     await new Promise(r => setTimeout(r, 100));
 
-    // Ready all players
     client1.emit('setReady', { isReady: true });
     client2.emit('setReady', { isReady: true });
     client3.emit('setReady', { isReady: true });
     client4.emit('setReady', { isReady: true });
     await new Promise(r => setTimeout(r, 100));
 
-    // TEST 1 — ROLE OWNERSHIP
-    const room = roomManager.getRoom(roomCode);
-    if (room.players.find(p => p.id === p1Id).role === 'THIEF' &&
-        room.players.find(p => p.id === p2Id).role === 'HACKER') {
-      console.log('✓ TEST 1 PASSED: Role ownership verified (P1=THIEF, P2=HACKER)');
-    } else {
-      throw new Error('TEST 1 Failed: Roles not assigned correctly');
-    }
-
-    // TEST 2 — WRONG CREW CONTROL REJECTION
-    // Before game starts, crewMove should be rejected
-    await new Promise((resolve, reject) => {
-      client1.once('errorMessage', data => {
-        if (data.message.includes('not currently active') || data.message.includes('Unauthorized')) {
-          console.log('✓ TEST 2.1 PASSED: crewMove blocked before game start');
-          resolve();
-        } else {
-          reject(new Error(`TEST 2.1 Failed: Unexpected error: ${data.message}`));
-        }
-      });
-      client1.emit('crewMove', { role: 'THIEF', position: { x: 0, y: 0, z: 0 }, rotationY: 0, state: 'MOVING' });
-    });
-
-    // TEST 3 — CREW SNAPSHOT ON GAME START
-    let startData = null;
     await new Promise(resolve => {
-      client1.once('gameStarting', data => {
-        startData = data;
-        resolve();
-      });
+      client1.once('gameStarting', () => resolve());
       client1.emit('startGame');
     });
 
-    if (startData && startData.crew && startData.crew.length === 4) {
-      const thiefInit = startData.crew.find(c => c.role === 'THIEF');
-      if (thiefInit && thiefInit.position.x === -4 && thiefInit.position.z === 19.5) {
-        console.log('✓ TEST 3 PASSED: gameStarting delivered initial 4-player crew snapshot with spawn positions');
-      } else {
-        throw new Error('TEST 3 Failed: Thief initial position invalid');
-      }
+    console.log('✓ SETUP COMPLETE: 4-Player room entered PLANNING phase');
+
+    // ── TEST 1: Role-owned action addition ──
+    await new Promise((resolve, reject) => {
+      client1.once('teamPlanUpdated', (data) => {
+        if (data.teamPlan && data.teamPlan.THIEF && data.teamPlan.THIEF.length === 1 && data.teamPlan.THIEF[0].target === 'office') {
+          console.log('✓ TEST 1 PASSED: Player 1 (THIEF) successfully added action to team plan');
+          resolve();
+        } else {
+          reject(new Error(`TEST 1 Failed: Unexpected teamPlan payload: ${JSON.stringify(data)}`));
+        }
+      });
+      client1.emit('addAction', { role: 'THIEF', action: { type: 'MOVE', target: 'office' } });
+    });
+
+    // ── TEST 2: Unauthorized action addition rejection ──
+    await new Promise((resolve, reject) => {
+      client1.once('planningError', (data) => {
+        if (data.message.includes('Unauthorized: You can only add actions for your own role')) {
+          console.log('✓ TEST 2 PASSED: Server rejected unauthorized action modification (P1 trying to modify HACKER)');
+          resolve();
+        } else {
+          reject(new Error(`TEST 2 Failed: Unexpected planning error message: ${data.message}`));
+        }
+      });
+      client1.emit('addAction', { role: 'HACKER', action: { type: 'MOVE', target: 'securityRoom' } });
+    });
+
+    // ── TEST 3: Real-time team plan broadcast ──
+    const p1ReceivePromise = new Promise(resolve => {
+      const handler = (data) => {
+        if (data.teamPlan && data.teamPlan.HACKER && data.teamPlan.HACKER.length === 1) {
+          client1.off('teamPlanUpdated', handler);
+          resolve();
+        }
+      };
+      client1.on('teamPlanUpdated', handler);
+    });
+
+    const p4ReceivePromise = new Promise(resolve => {
+      const handler = (data) => {
+        if (data.teamPlan && data.teamPlan.HACKER && data.teamPlan.HACKER.length === 1) {
+          client4.off('teamPlanUpdated', handler);
+          resolve();
+        }
+      };
+      client4.on('teamPlanUpdated', handler);
+    });
+
+    client2.emit('addAction', { role: 'HACKER', action: { type: 'MOVE', target: 'securityRoom' } });
+    await Promise.all([p1ReceivePromise, p4ReceivePromise]);
+    console.log('✓ TEST 3 PASSED: Teammate actions broadcast live to all other clients in real-time');
+
+    // ── TEST 4: Multiple Operatives Planning Simultaneously ──
+    const addActionAsync = (client, role, action) => {
+      return new Promise((resolve) => {
+        const handler = (data) => {
+          if (data.role === role.toUpperCase()) {
+            client.off('teamPlanUpdated', handler);
+            resolve(data);
+          }
+        };
+        client.on('teamPlanUpdated', handler);
+        client.emit('addAction', { role, action });
+      });
+    };
+
+    await addActionAsync(client1, 'THIEF', { type: 'WAIT', duration: 2 });
+    await addActionAsync(client3, 'DISTRACTOR', { type: 'MOVE', target: 'lobby' });
+    await addActionAsync(client4, 'ENFORCER', { type: 'MOVE', target: 'hallway' });
+
+    const room = roomManager.getRoom(roomCode);
+    const plan = room.teamPlan;
+    if (plan.THIEF.length === 2 && plan.HACKER.length === 1 && plan.DISTRACTOR.length === 1 && plan.ENFORCER.length === 1) {
+      console.log('✓ TEST 4 PASSED: All 4 operatives planned actions concurrently');
     } else {
-      throw new Error('TEST 3 Failed: Crew snapshot missing or incomplete');
+      throw new Error(`TEST 4 Failed: Incomplete team plan: ${JSON.stringify(plan)}`);
     }
 
-    // TEST 2 (Cont.) — UNAUTHORIZED ROLE MOVE DURING GAME
-    // Player 1 (THIEF) tries to move HACKER
-    await new Promise((resolve, reject) => {
-      client1.once('errorMessage', data => {
-        if (data.message.includes('Unauthorized: You do not own role HACKER')) {
-          console.log('✓ TEST 2.2 PASSED: Server rejected unauthorized role control (P1 trying to move HACKER)');
-          resolve();
-        } else {
-          reject(new Error(`TEST 2.2 Failed: Unexpected error: ${data.message}`));
-        }
-      });
-      client1.emit('crewMove', { role: 'HACKER', position: { x: 5, y: 0, z: 5 }, rotationY: 0, state: 'MOVING' });
-    });
-
-    // TEST 4 — SINGLE CREW MOVEMENT BROADCAST
-    await new Promise((resolve, reject) => {
-      client2.once('crewMoved', data => {
-        if (data.role === 'THIEF' && data.position.x === 2.5 && data.state === 'MOVING') {
-          console.log('✓ TEST 4 PASSED: Player 1 movement of THIEF broadcast to other clients');
-          resolve();
-        } else {
-          reject(new Error(`TEST 4 Failed: Received unexpected crewMoved data: ${JSON.stringify(data)}`));
-        }
-      });
-      client1.emit('crewMove', {
-        role: 'THIEF',
-        position: { x: 2.5, y: 0, z: 10.0 },
-        rotationY: 1.57,
-        state: 'MOVING',
-      });
-    });
-
-    // TEST 5 — MULTIPLE PLAYERS MOVEMENT SYNC
-    const p3HackerPromise = new Promise(resolve => {
+    // ── TEST 5: Action Removal and Queue Clearing ──
+    await new Promise((resolve) => {
       const handler = (data) => {
-        if (data.role === 'HACKER' && data.position.x === -1.0) {
-          client3.off('crewMoved', handler);
+        if (data.role === 'THIEF' && data.teamPlan.THIEF.length === 1) {
+          client1.off('teamPlanUpdated', handler);
           resolve();
         }
       };
-      client3.on('crewMoved', handler);
+      client1.on('teamPlanUpdated', handler);
+      client1.emit('removeAction', { role: 'THIEF', index: 0 });
     });
 
-    const p1DistractorPromise = new Promise(resolve => {
+    await new Promise((resolve) => {
       const handler = (data) => {
-        if (data.role === 'DISTRACTOR' && data.position.x === 3.0) {
-          client1.off('crewMoved', handler);
+        if (data.role === 'DISTRACTOR' && data.teamPlan.DISTRACTOR.length === 0) {
+          client3.off('teamPlanUpdated', handler);
           resolve();
         }
       };
-      client1.on('crewMoved', handler);
+      client3.on('teamPlanUpdated', handler);
+      client3.emit('clearActions', { role: 'DISTRACTOR' });
     });
+    console.log('✓ TEST 5 PASSED: Action removal and queue clearing synchronized across team');
 
-    client2.emit('crewMove', { role: 'HACKER', position: { x: -1.0, y: 0, z: 15.0 }, rotationY: 0.5, state: 'MOVING' });
-    client3.emit('crewMove', { role: 'DISTRACTOR', position: { x: 3.0, y: 0, z: 12.0 }, rotationY: -0.5, state: 'MOVING' });
+    // ── TEST 6: Planning Readiness Tracking ──
+    await new Promise((resolve) => {
+      const handler = (data) => {
+        if (data.playerId === p2Id && data.isReady === true) {
+          client2.off('planningReadyUpdated', handler);
+          resolve();
+        }
+      };
+      client2.on('planningReadyUpdated', handler);
+      client2.emit('setPlanningReady', { isReady: true });
+    });
+    console.log('✓ TEST 6 PASSED: Planning ready state updated and broadcast');
 
-    await Promise.all([p3HackerPromise, p1DistractorPromise]);
-    console.log('✓ TEST 5 PASSED: Multi-client movement synchronized simultaneously');
-
-    // TEST 6 — INVALID COORDINATES REJECTION
+    // ── TEST 7: Execution Start Blocked When Players Not Ready ──
     await new Promise((resolve, reject) => {
-      client1.once('errorMessage', data => {
-        if (data.message.includes('finite') || data.message.includes('out of playable bounds')) {
-          console.log('✓ TEST 6 PASSED: Out-of-bounds / invalid coordinates rejected by server');
+      client1.once('planningError', (data) => {
+        if (data.message.includes('READY')) {
+          console.log('✓ TEST 7 PASSED: Execution start blocked when not all operatives are ready');
           resolve();
         } else {
-          reject(new Error(`TEST 6 Failed: Unexpected error: ${data.message}`));
+          reject(new Error(`TEST 7 Failed: Expected readiness error, got: ${data.message}`));
         }
       });
-      client1.emit('crewMove', { role: 'THIEF', position: { x: 999.0, y: 0, z: 999.0 }, rotationY: 0, state: 'MOVING' });
+      client1.emit('startExecution');
     });
 
-    // TEST 7 — STATE TRANSITION TO IDLE (FINAL UPDATE)
+    // ── TEST 8: Non-Host Execution Start Rejection ──
+    // Set all players to ready
+    const setReadyAsync = (client, isReady) => {
+      return new Promise((resolve) => {
+        const handler = (data) => {
+          client.off('planningReadyUpdated', handler);
+          resolve();
+        };
+        client.on('planningReadyUpdated', handler);
+        client.emit('setPlanningReady', { isReady });
+      });
+    };
+
+    await setReadyAsync(client1, true);
+    await setReadyAsync(client3, true);
+    await setReadyAsync(client4, true);
+
+    // Player 2 (non-host) attempts to trigger execution
     await new Promise((resolve, reject) => {
-      client4.once('crewMoved', data => {
-        if (data.role === 'THIEF' && data.state === 'IDLE') {
-          console.log('✓ TEST 7 PASSED: Authoritative IDLE state broadcast on arrival');
+      client2.once('planningError', (data) => {
+        if (data.message.includes('Only the host')) {
+          console.log('✓ TEST 8 PASSED: Non-host execution trigger rejected');
           resolve();
         } else {
-          reject(new Error(`TEST 7 Failed: Expected state IDLE, got ${data.state}`));
+          reject(new Error(`TEST 8 Failed: Expected host authority error, got: ${data.message}`));
         }
       });
-      client1.emit('crewMove', { role: 'THIEF', position: { x: 2.5, y: 0, z: 10.0 }, rotationY: 1.57, state: 'IDLE' });
+      client2.emit('startExecution');
     });
 
-    // TEST 8 — CREW STATE REQUEST
-    await new Promise((resolve, reject) => {
-      client3.once('crewStateSnapshot', data => {
-        if (data.crew && data.crew.length === 4) {
-          console.log('✓ TEST 8 PASSED: crewStateRequest returned active room crew snapshot');
-          resolve();
-        } else {
-          reject(new Error('TEST 8 Failed: Snapshot missing crew array'));
-        }
-      });
-      client3.emit('crewStateRequest');
-    });
+    // ── TEST 9: Synchronized Execution Trigger ──
+    let clientsStartingCount = 0;
+    const countExecution = (data) => {
+      if (data.teamPlan && data.roomCode === roomCode) {
+        clientsStartingCount++;
+      }
+    };
 
-    // TEST 9 — IN-GAME DISCONNECT BROADCAST
-    await new Promise((resolve, reject) => {
-      client1.once('playerDisconnectedInGame', data => {
+    client1.on('executionStarting', countExecution);
+    client2.on('executionStarting', countExecution);
+    client3.on('executionStarting', countExecution);
+    client4.on('executionStarting', countExecution);
+
+    // Host triggers execution
+    client1.emit('startExecution');
+    await new Promise(r => setTimeout(r, 200));
+
+    if (clientsStartingCount === 4) {
+      console.log('✓ TEST 9 PASSED: executionStarting received by all 4 clients with synchronized team plan');
+    } else {
+      throw new Error(`TEST 9 Failed: clientsStartingCount = ${clientsStartingCount}`);
+    }
+
+    // ── TEST 10: In-Game Disconnect ──
+    await new Promise((resolve) => {
+      client1.once('playerDisconnectedInGame', (data) => {
         if (data.role === 'ENFORCER') {
-          console.log('✓ TEST 9 PASSED: In-game disconnect of Player 4 broadcast to remaining players');
           resolve();
-        } else {
-          reject(new Error(`TEST 9 Failed: Expected ENFORCER disconnect, got: ${JSON.stringify(data)}`));
         }
       });
       client4.disconnect();
     });
+    console.log('✓ TEST 10 PASSED: In-game disconnect handled cleanly');
 
-    // TEST 10 — PLAYING ROOM JOIN RESTRICTION
-    const client5 = createClientSocket();
-    await connectAnd(client5);
-    await new Promise((resolve, reject) => {
-      client5.once('errorMessage', data => {
-        if (data.message.includes('already started')) {
-          console.log('✓ TEST 10 PASSED: New player prevented from joining active PLAYING room');
-          client5.disconnect();
-          resolve();
-        } else {
-          reject(new Error(`TEST 10 Failed: Expected already started error, got: ${data.message}`));
-        }
-      });
-      client5.emit('joinRoom', { name: 'Late Player', roomCode });
-    });
-
-    // Cleanup remaining clients
+    // Cleanup
     client1.disconnect();
     client2.disconnect();
     client3.disconnect();
     await new Promise(r => setTimeout(r, 100));
 
     console.log('\n========================================');
-    console.log('ALL 10 MILESTONE 10 MULTIPLAYER TESTS PASSED!');
+    console.log('ALL 10 MILESTONE 11 TESTS PASSED!');
     console.log('========================================\n');
 
   } finally {

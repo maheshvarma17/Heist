@@ -92,17 +92,22 @@ NODE + EXPRESS + SOCKET.IO SERVER (server/server.js)
 
 ---
 
-## Current Multiplayer Scope & Limitations (Milestone 10)
+## Current Multiplayer Scope & Limitations (Milestone 11)
 
-- **Synchronized in Milestone 10**:
-  - Player identities, lobby rooms, role assignment, and ready states.
+- **Synchronized in Milestone 11**:
+  - Player identities, lobby rooms, role assignment, and lobby ready states.
+  - Server-authoritative **Shared Team Plan** (`THIEF`, `HACKER`, `DISTRACTOR`, `ENFORCER`).
+  - Strict role-based action validation: players can only add/remove actions for their assigned role.
+  - Real-time action broadcast (`teamPlanUpdated`) displaying live plans of all 4 teammates in real time.
+  - Separate **Planning Ready** system (`READY FOR HEIST`) tracking all 4 players' readiness.
+  - Synchronized host execution trigger (`EXECUTE HEIST` / `executionStarting`) that kicks off the 60-second heist simultaneously across all clients.
   - Server-validated crew movement and state updates.
   - 12.5 Hz throttled network transmission and remote interpolation.
   - Role labels and "YOU" local ownership indicator.
   - In-game player disconnect broadcasting.
-- **Local in Milestone 10**:
+- **Local in Milestone 11**:
   - 3D scene rendering, guard patrolling, security camera scanning and detection mathematics, and local 60-second timer simulation.
-  - Synchronized team planning, networked guards/cameras, alarms, and loot will be introduced in subsequent milestones.
+  - Networked guards/cameras, alarms, and loot will be introduced in subsequent milestones.
 
 ---
 
@@ -116,7 +121,7 @@ HEIST-60-SECONDS/
 ├── server/               # Multiplayer backend
 │   ├── server.js         # Express + Socket.IO server & socket handlers
 │   ├── rooms/
-│   │   └── RoomManager.js # Room lifecycle & authoritative crew states
+│   │   └── RoomManager.js # Room lifecycle, team planning & crew states
 │   └── players/
 │       └── PlayerManager.js
 ├── src/
@@ -136,7 +141,7 @@ HEIST-60-SECONDS/
 │   ├── systems/          # MovementSystem, ActionQueue, ActionSystem, Timer, Guards, Cameras
 │   └── ui/
 │       ├── MultiplayerUI.js # Light theme lobby, name & join modals
-│       ├── PlannerUI.js     # Light theme strategy planner panel with role ownership
+│       ├── PlannerUI.js     # Light theme shared team strategy planner panel
 │       └── TimerHUD.js      # Light theme countdown timer display
 └── test/
     └── multiplayer.test.js # Automated integration test suite

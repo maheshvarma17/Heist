@@ -41,6 +41,7 @@ io.on('connection', (socket) => {
   /** Helper to send error to this client */
   const sendError = (message) => {
     socket.emit('errorMessage', { message });
+    socket.emit('planningError', { message });
   };
 
   /**
@@ -173,7 +174,7 @@ io.on('connection', (socket) => {
   });
 
   /**
-   * Handle: setReady
+   * Handle: setReady (Lobby Ready)
    * Payload: { isReady: boolean }
    */
   socket.on('setReady', ({ isReady } = {}) => {
@@ -196,7 +197,7 @@ io.on('connection', (socket) => {
   });
 
   /**
-   * Handle: startGame
+   * Handle: startGame (Lobby -> Planning Phase)
    */
   socket.on('startGame', () => {
     if (!player.roomCode) {
@@ -211,13 +212,140 @@ io.on('connection', (socket) => {
     console.log(`[Multiplayer] Starting game in room ${res.room.code}! Initializing crew states.`);
     const serialized = roomManager.serializeRoom(res.room);
 
-    // Broadcast gameStarting to all players in the room along with crew snapshot
+    // Broadcast gameStarting to all players in the room along with crew snapshot & empty teamPlan
     io.to(res.room.code).emit('gameStarting', {
       roomCode: res.room.code,
       players: serialized.players,
       crew: res.crewSnapshot,
+      teamPlan: res.teamPlan,
     });
   });
+
+  // ═══════════════════════════════════════════════════════════
+  // SHARED TEAM PLANNING EVENTS (Milestone 11)
+  // ═══════════════════════════════════════════════════════════
+
+  /**
+   * Handle: addAction
+   * Payload: { role: string, action: { type, target, duration } }
+   */
+  socket.on('addAction', (data = {}) => {
+    if (!player.roomCode) return sendError('You are not in a room.');
+
+    const res = roomManager.addAction(player.roomCode, socket.id, data);
+    if (!res.success) {
+      return sendError(res.error || 'Failed to add action to team plan.');
+    }
+
+    // Broadcast updated team plan & planning ready state to all players in the room
+    io.to(player.roomCode).emit('teamPlanUpdated', {
+      roomCode: player.roomCode,
+      teamPlan: res.teamPlan,
+      planningReady: res.planningReady,
+      addedAction: res.addedAction,
+      role: data.role.toUpperCase(),
+    });
+  });
+
+  /**
+   * Handle: removeAction
+   * Payload: { role: string, index?: number, actionId?: string }
+   */
+  socket.on('removeAction', (data = {}) => {
+    if (!player.roomCode) return sendError('You are not in a room.');
+
+    const res = roomManager.removeAction(player.roomCode, socket.id, data);
+    if (!res.success) {
+      return sendError(res.error || 'Failed to remove action from team plan.');
+    }
+
+    io.to(player.roomCode).emit('teamPlanUpdated', {
+      roomCode: player.roomCode,
+      teamPlan: res.teamPlan,
+      planningReady: res.planningReady,
+      role: data.role.toUpperCase(),
+    });
+  });
+
+  /**
+   * Handle: clearActions
+   * Payload: { role: string }
+   */
+  socket.on('clearActions', (data = {}) => {
+    if (!player.roomCode) return sendError('You are not in a room.');
+
+    const res = roomManager.clearActions(player.roomCode, socket.id, data);
+    if (!res.success) {
+      return sendError(res.error || 'Failed to clear role actions.');
+    }
+
+    io.to(player.roomCode).emit('teamPlanUpdated', {
+      roomCode: player.roomCode,
+      teamPlan: res.teamPlan,
+      planningReady: res.planningReady,
+      role: data.role.toUpperCase(),
+    });
+  });
+
+  /**
+   * Handle: setPlanningReady
+   * Payload: { isReady: boolean }
+   */
+  socket.on('setPlanningReady', ({ isReady } = {}) => {
+    if (!player.roomCode) return sendError('You are not in a room.');
+
+    const res = roomManager.setPlanningReady(player.roomCode, socket.id, isReady);
+    if (!res.success) {
+      return sendError(res.error || 'Failed to set planning ready state.');
+    }
+
+    io.to(player.roomCode).emit('planningReadyUpdated', {
+      roomCode: player.roomCode,
+      playerId: res.playerId,
+      isReady: res.isReady,
+      planningReady: res.planningReady,
+    });
+  });
+
+  /**
+   * Handle: requestTeamPlan
+   */
+  socket.on('requestTeamPlan', () => {
+    if (!player.roomCode) return sendError('You are not in a room.');
+
+    const room = roomManager.getRoom(player.roomCode);
+    if (room) {
+      socket.emit('teamPlanSnapshot', {
+        roomCode: room.code,
+        teamPlan: room.teamPlan,
+        planningReady: room.planningReady,
+      });
+    }
+  });
+
+  /**
+   * Handle: startExecution (Planning -> Execution Phase)
+   */
+  socket.on('startExecution', () => {
+    if (!player.roomCode) return sendError('You are not in a room.');
+
+    const res = roomManager.startExecution(player.roomCode, socket.id);
+    if (!res.success) {
+      return sendError(res.error || 'Cannot start heist execution.');
+    }
+
+    console.log(`[Multiplayer] Starting synchronized heist execution in room ${res.roomCode}!`);
+
+    // Broadcast executionStarting with final synchronized team plan to all 4 clients
+    io.to(res.roomCode).emit('executionStarting', {
+      roomCode: res.roomCode,
+      teamPlan: res.teamPlan,
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════
+  // CREW MOVEMENT EVENTS (Milestone 10)
+  // ═══════════════════════════════════════════════════════════
 
   /**
    * Handle: crewMove

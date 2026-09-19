@@ -106,6 +106,26 @@ export class MultiplayerClient {
       this._emitLocal('playerDisconnectedInGame', data);
     });
 
+    this.socket.on('teamPlanUpdated', (data) => {
+      this._emitLocal('teamPlanUpdated', data);
+    });
+
+    this.socket.on('teamPlanSnapshot', (data) => {
+      this._emitLocal('teamPlanSnapshot', data);
+    });
+
+    this.socket.on('planningReadyUpdated', (data) => {
+      this._emitLocal('planningReadyUpdated', data);
+    });
+
+    this.socket.on('executionStarting', (data) => {
+      this._emitLocal('executionStarting', data);
+    });
+
+    this.socket.on('planningError', (data) => {
+      this._emitLocal('planningError', data);
+    });
+
     this.socket.on('errorMessage', (data) => {
       this.state.lastError = data.message;
       this._emitLocal('errorMessage', data);
@@ -175,6 +195,44 @@ export class MultiplayerClient {
   requestCrewState() {
     if (this.socket && this.socket.connected) {
       this.socket.emit('crewStateRequest');
+    }
+  }
+
+  // ─── Planning Actions (Milestone 11) ────────────────────
+
+  addAction(role, action) {
+    if (this.socket && this.socket.connected) {
+      this.socket.emit('addAction', { role, action });
+    }
+  }
+
+  removeAction(role, index, actionId) {
+    if (this.socket && this.socket.connected) {
+      this.socket.emit('removeAction', { role, index, actionId });
+    }
+  }
+
+  clearActions(role) {
+    if (this.socket && this.socket.connected) {
+      this.socket.emit('clearActions', { role });
+    }
+  }
+
+  setPlanningReady(isReady) {
+    if (this.socket && this.socket.connected) {
+      this.socket.emit('setPlanningReady', { isReady });
+    }
+  }
+
+  requestTeamPlan() {
+    if (this.socket && this.socket.connected) {
+      this.socket.emit('requestTeamPlan');
+    }
+  }
+
+  startExecution() {
+    if (this.socket && this.socket.connected) {
+      this.socket.emit('startExecution');
     }
   }
 
