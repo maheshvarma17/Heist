@@ -1,23 +1,17 @@
 /**
  * PlannerUI.js
  * DOM-based planning panel for assigning actions to crew members.
- *
- * Shows during the PLANNING phase.
- * Hidden during EXECUTING.
- * Shows a completion overlay when all actions finish.
- *
- * This is a temporary UI — it will be replaced with a
- * polished in-game planner in a future milestone.
+ * Redesigned with a modern Light UI Strategy Theme.
  */
 
 import { ROOM_LABELS } from '../systems/ActionSystem.js';
 
 // ─── Character accent colors (CSS) ──────────────────────────
 const ACCENT = {
-  thief:      '#00ccaa',
-  hacker:     '#3388ff',
-  distractor: '#ffaa33',
-  enforcer:   '#cc3333',
+  thief:      '#059669', // Emerald
+  hacker:     '#2563eb', // Blue
+  distractor: '#d97706', // Amber
+  enforcer:   '#dc2626', // Red
 };
 
 // Navigation point keys available for MOVE actions
@@ -103,7 +97,7 @@ export class PlannerUI {
     // ── Title ──
     const title = document.createElement('div');
     title.className = 'planner-title';
-    title.innerHTML = '<h2>PLAN YOUR HEIST</h2><p>Assign actions, then execute.</p>';
+    title.innerHTML = '<h2>HEIST PLANNER</h2><p>Assign actions, then execute.</p>';
     panel.appendChild(title);
 
     // ── Character cards ──
@@ -118,7 +112,8 @@ export class PlannerUI {
     // ── Execute button ──
     const execBtn = document.createElement('button');
     execBtn.id = 'execute-btn';
-    execBtn.innerHTML = '▶&ensp;EXECUTE';
+    execBtn.className = 'btn btn-primary';
+    execBtn.innerHTML = '▶&ensp;EXECUTE HEIST';
     execBtn.addEventListener('click', () => {
       // Only execute if at least one character has actions
       const hasAny = this._crew.members.some(m => this._queues.get(m.role).hasActions());
@@ -133,19 +128,19 @@ export class PlannerUI {
     // ── Status bar (shown during execution) ──
     const status = document.createElement('div');
     status.id = 'exec-status';
-    status.textContent = 'Executing…';
+    status.textContent = 'EXECUTING HEIST…';
     document.body.appendChild(status);
     this._statusBar = status;
   }
 
   _buildCard(member) {
     const role   = member.role;
-    const accent = ACCENT[role] ?? '#888';
+    const accent = ACCENT[role] ?? '#0284c7';
     const queue  = this._queues.get(role);
 
     const card = document.createElement('div');
     card.className = 'crew-card';
-    card.style.setProperty('--accent', accent);
+    card.style.setProperty('--card-accent', accent);
 
     // ── Header ──
     const header = document.createElement('div');
@@ -231,6 +226,7 @@ export class PlannerUI {
       const removeBtn = document.createElement('button');
       removeBtn.className = 'remove-btn';
       removeBtn.textContent = '×';
+      removeBtn.title = 'Remove action';
       removeBtn.addEventListener('click', () => {
         queue.removeAction(i);
         this._renderActions(role);
@@ -249,11 +245,11 @@ export class PlannerUI {
     overlay.id = 'complete-overlay';
 
     overlay.innerHTML = `
-      <div class="complete-box">
+      <div class="complete-box light-card">
         <h2 id="result-title">HEIST COMPLETE</h2>
         <p id="result-subtitle">All crew members have finished their actions.</p>
         <p id="result-detail" class="result-detail"></p>
-        <button id="plan-again-btn">↻&ensp;PLAN AGAIN</button>
+        <button id="plan-again-btn" class="btn btn-primary">↻&ensp;PLAN AGAIN</button>
       </div>
     `;
 
@@ -283,7 +279,7 @@ export class PlannerUI {
       titleEl.textContent    = 'HEIST COMPLETE';
       subtitleEl.textContent = 'All actions executed successfully.';
       const secs = result.remaining != null ? result.remaining.toFixed(1) : '0.0';
-      detailEl.textContent   = `Time remaining: ${secs}s`;
+      detailEl.textContent   = `TIME REMAINING: ${secs} SEC`;
     }
   }
 
@@ -313,22 +309,22 @@ function _labelFor(action) {
   }
 }
 
-// ─── CSS ─────────────────────────────────────────────────────
+// ─── CSS (Light Theme) ───────────────────────────────────────
 
 const PLANNER_CSS = `
 /* ══ Planner Panel ═══════════════════════════════════ */
 #planner-panel {
   position: fixed;
   top: 0; left: 0;
-  width: 330px;
+  width: 350px;
   height: 100vh;
-  background: rgba(8, 8, 14, 0.92);
-  backdrop-filter: blur(12px);
-  border-right: 1px solid rgba(240, 192, 64, 0.15);
+  background: var(--color-surface);
+  border-right: 1px solid var(--color-border);
+  box-shadow: var(--shadow-xl);
   display: flex;
   flex-direction: column;
-  padding: 20px 16px 16px;
-  gap: 10px;
+  padding: 24px 18px 18px;
+  gap: 12px;
   z-index: 100;
   overflow-y: auto;
   transform: translateX(-110%);
@@ -337,20 +333,21 @@ const PLANNER_CSS = `
 #planner-panel.visible {
   transform: translateX(0);
 }
-#planner-panel::-webkit-scrollbar { width: 4px; }
-#planner-panel::-webkit-scrollbar-thumb { background: rgba(240,192,64,0.25); border-radius: 2px; }
+#planner-panel::-webkit-scrollbar { width: 5px; }
+#planner-panel::-webkit-scrollbar-thumb { background: var(--color-border-strong); border-radius: 4px; }
 
 /* ── Title ──────────────────────────────────────────── */
 .planner-title h2 {
   font-size: 1.15rem;
-  letter-spacing: 0.2em;
-  color: #f0c040;
+  font-weight: 800;
+  letter-spacing: 0.15em;
+  color: var(--color-text);
   text-transform: uppercase;
   margin-bottom: 2px;
 }
 .planner-title p {
-  font-size: 0.75rem;
-  color: #777;
+  font-size: 0.78rem;
+  color: var(--color-text-secondary);
 }
 
 /* ── Cards container ────────────────────────────────── */
@@ -361,15 +358,17 @@ const PLANNER_CSS = `
   flex: 1;
   min-height: 0;
   overflow-y: auto;
+  padding-right: 2px;
 }
 
 /* ── Crew Card ──────────────────────────────────────── */
 .crew-card {
-  background: rgba(20, 20, 30, 0.85);
-  border: 1px solid rgba(255,255,255,0.06);
-  border-left: 3px solid var(--accent, #888);
-  border-radius: 6px;
-  padding: 10px 12px;
+  background: var(--color-surface-secondary);
+  border: 1px solid var(--color-border);
+  border-left: 4px solid var(--card-accent, var(--color-accent));
+  border-radius: var(--radius-md);
+  padding: 12px 14px;
+  box-shadow: var(--shadow-sm);
 }
 .card-header {
   display: flex;
@@ -378,19 +377,20 @@ const PLANNER_CSS = `
   margin-bottom: 8px;
 }
 .accent-dot {
-  width: 8px; height: 8px;
+  width: 9px; height: 9px;
   border-radius: 50%;
   flex-shrink: 0;
 }
 .card-role {
-  font-size: 0.8rem;
-  font-weight: 700;
-  letter-spacing: 0.12em;
-  color: #ddd;
+  font-size: 0.82rem;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  color: var(--color-text);
 }
 .card-name {
-  font-size: 0.7rem;
-  color: #666;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--color-text-secondary);
   margin-left: auto;
 }
 
@@ -398,8 +398,8 @@ const PLANNER_CSS = `
 .action-list {
   display: flex;
   flex-direction: column;
-  gap: 3px;
-  margin-bottom: 8px;
+  gap: 4px;
+  margin-bottom: 10px;
   max-height: 120px;
   overflow-y: auto;
 }
@@ -407,111 +407,106 @@ const PLANNER_CSS = `
   display: flex;
   align-items: center;
   justify-content: space-between;
-  background: rgba(255,255,255,0.03);
-  border-radius: 3px;
-  padding: 4px 8px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: 5px 8px;
 }
 .action-label {
-  font-size: 0.72rem;
-  font-family: 'Consolas', 'Courier New', monospace;
-  color: #bbb;
+  font-size: 0.75rem;
+  font-family: var(--font-family-mono);
+  font-weight: 600;
+  color: var(--color-text);
 }
 .action-empty {
-  font-size: 0.7rem;
-  color: #555;
+  font-size: 0.72rem;
+  color: var(--color-text-muted);
   font-style: italic;
   padding: 4px 0;
 }
 .remove-btn {
   background: none;
   border: none;
-  color: #cc4444;
-  font-size: 0.9rem;
+  color: var(--color-danger);
+  font-size: 1.1rem;
+  font-weight: bold;
   cursor: pointer;
   padding: 0 4px;
   line-height: 1;
-  opacity: 0.6;
-  transition: opacity 0.15s;
+  opacity: 0.7;
+  transition: opacity var(--transition-fast);
 }
 .remove-btn:hover { opacity: 1; }
 
 /* ── Card controls ──────────────────────────────────── */
 .card-controls {
   display: flex;
-  gap: 5px;
+  gap: 6px;
   flex-wrap: wrap;
 }
 .room-select {
   flex: 1;
-  min-width: 100px;
-  background: rgba(20,20,30,0.9);
-  border: 1px solid rgba(255,255,255,0.1);
-  border-radius: 3px;
-  color: #ccc;
-  font-size: 0.7rem;
-  padding: 4px 6px;
+  min-width: 110px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+  color: var(--color-text);
+  font-family: var(--font-family-base);
+  font-size: 0.75rem;
+  font-weight: 600;
+  padding: 6px 8px;
   cursor: pointer;
 }
-.room-select:focus { outline: 1px solid rgba(240,192,64,0.4); }
+.room-select:focus {
+  outline: none;
+  border-color: var(--color-accent);
+}
 
 .add-btn {
-  background: rgba(255,255,255,0.05);
-  border: 1px solid rgba(255,255,255,0.1);
-  border-radius: 3px;
-  color: #bbb;
-  font-size: 0.68rem;
-  font-weight: 600;
-  padding: 4px 8px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+  color: var(--color-text-secondary);
+  font-family: var(--font-family-base);
+  font-size: 0.72rem;
+  font-weight: 700;
+  padding: 6px 10px;
   cursor: pointer;
   letter-spacing: 0.05em;
-  transition: background 0.15s, color 0.15s;
+  transition: all var(--transition-fast);
 }
 .add-btn:hover {
-  background: rgba(255,255,255,0.12);
-  color: #fff;
+  background: var(--color-surface-tertiary);
+  color: var(--color-text);
+  border-color: var(--color-text-secondary);
 }
-.move-btn:hover { border-color: rgba(240,192,64,0.5); }
-.wait-btn:hover { border-color: rgba(136,136,170,0.5); }
+.move-btn:hover { border-color: var(--color-accent); color: var(--color-accent); }
+.wait-btn:hover { border-color: var(--color-text-secondary); }
 
 /* ── Execute button ─────────────────────────────────── */
 #execute-btn {
   width: 100%;
   padding: 12px;
-  margin-top: 6px;
-  background: linear-gradient(135deg, #f0c040, #d4a020);
-  border: none;
-  border-radius: 6px;
-  color: #0a0a0f;
   font-size: 0.95rem;
   font-weight: 800;
-  letter-spacing: 0.15em;
-  cursor: pointer;
-  text-transform: uppercase;
-  transition: filter 0.2s, transform 0.1s;
+  letter-spacing: 0.12em;
   flex-shrink: 0;
-}
-#execute-btn:hover {
-  filter: brightness(1.12);
-  transform: scale(1.02);
-}
-#execute-btn:active {
-  transform: scale(0.98);
 }
 
 /* ══ Execution Status Bar ════════════════════════════ */
 #exec-status {
   position: fixed;
-  top: 70px;
+  top: 24px;
   left: 50%;
-  transform: translateX(-50%) translateY(-30px);
-  background: rgba(8,8,14,0.85);
-  backdrop-filter: blur(8px);
-  border: 1px solid rgba(240,192,64,0.25);
-  border-radius: 6px;
+  transform: translateX(-50%) translateY(-20px);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  box-shadow: var(--shadow-lg);
+  border-radius: var(--radius-md);
   padding: 8px 24px;
-  color: #f0c040;
+  color: var(--color-accent);
   font-size: 0.85rem;
-  font-weight: 600;
+  font-weight: 800;
   letter-spacing: 0.1em;
   z-index: 100;
   opacity: 0;
@@ -530,8 +525,8 @@ const PLANNER_CSS = `
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(4, 4, 10, 0.75);
-  backdrop-filter: blur(6px);
+  background: rgba(15, 23, 42, 0.4);
+  backdrop-filter: blur(8px);
   z-index: 200;
   opacity: 0;
   pointer-events: none;
@@ -543,51 +538,46 @@ const PLANNER_CSS = `
 }
 .complete-box {
   text-align: center;
-  background: rgba(14,14,22,0.95);
-  border: 1px solid rgba(240,192,64,0.3);
-  border-radius: 10px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-xl);
   padding: 36px 48px;
+  max-width: 440px;
+  width: 90%;
 }
 .complete-box h2 {
   font-size: 1.5rem;
-  letter-spacing: 0.25em;
+  font-weight: 800;
+  letter-spacing: 0.15em;
   margin-bottom: 8px;
+  text-transform: uppercase;
 }
 .complete-box.success h2 {
-  color: #44dd66;
+  color: var(--color-success);
 }
 .complete-box.timeout h2 {
-  color: #ff4444;
+  color: var(--color-danger);
 }
 .complete-box p {
-  font-size: 0.85rem;
-  color: #999;
+  font-size: 0.875rem;
+  color: var(--color-text-secondary);
   margin-bottom: 6px;
 }
 .result-detail {
-  font-size: 1rem;
-  font-weight: 700;
-  letter-spacing: 0.1em;
-  margin-bottom: 16px !important;
+  font-family: var(--font-family-mono);
+  font-size: 1.05rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  margin-bottom: 20px !important;
 }
 .complete-box.success .result-detail {
-  color: #44dd66;
+  color: var(--color-success);
 }
 .complete-box.timeout .result-detail {
-  color: #ff4444;
+  color: var(--color-danger);
 }
 #plan-again-btn {
-  background: linear-gradient(135deg, #f0c040, #d4a020);
-  border: none;
-  border-radius: 6px;
-  color: #0a0a0f;
-  font-size: 0.9rem;
-  font-weight: 700;
-  padding: 10px 28px;
-  cursor: pointer;
-  letter-spacing: 0.1em;
-  transition: filter 0.2s, transform 0.1s;
+  padding: 10px 24px;
 }
-#plan-again-btn:hover { filter: brightness(1.12); transform: scale(1.02); }
-#plan-again-btn:active { transform: scale(0.98); }
 `;

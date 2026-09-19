@@ -32,9 +32,12 @@ import {
 export class Game {
   /**
    * @param {HTMLCanvasElement} canvas — the <canvas> element from index.html
+   * @param {Object} [options={}] — optional player context or config
    */
-  constructor(canvas) {
+  constructor(canvas, options = {}) {
     this.canvas = canvas;
+    this.options = options;
+    this.playerContext = options.playerContext || null;
     this.state = new GameState();
     this.clock = new THREE.Clock();
 
@@ -53,11 +56,25 @@ export class Game {
     this._initPlannerUI();
     this._initTimerHUD();
 
-    // Start in PLANNING phase
-    this._enterPlanning();
+    if (options.autoStartPlanner !== false) {
+      // Start in PLANNING phase immediately
+      this._enterPlanning();
+    }
 
     window.addEventListener('resize', () => this._onResize());
     this._onResize(); // set initial size
+  }
+
+  /**
+   * Start or transition to heist planning with player context.
+   * @param {Object} [context]
+   */
+  startHeist(context = null) {
+    if (context) {
+      this.playerContext = context;
+      console.log('[HEIST] Starting Heist with player identity:', context);
+    }
+    this._enterPlanning();
   }
 
   /* ── Renderer ──────────────────────────────────── */

@@ -1,9 +1,9 @@
 /**
  * TimerHUD.js
- * Prominent on-screen countdown display.
+ * Prominent light-themed on-screen countdown display.
  *
  * Visual states:
- *   60–21 s  →  normal  (light)
+ *   60–21 s  →  normal  (neutral/accent slate)
  *   20–11 s  →  warning (amber)
  *   10–0  s  →  critical (red, pulsing)
  */
@@ -82,13 +82,13 @@ export class TimerHUD {
   }
 }
 
-// ─── CSS ─────────────────────────────────────────────────────
+// ─── CSS (Light Theme) ───────────────────────────────────────
 
 const CSS = `
 #timer-hud {
   position: fixed;
   top: 18px;
-  right: 32px;
+  right: 28px;
   text-align: center;
   z-index: 120;
   user-select: none;
@@ -96,6 +96,12 @@ const CSS = `
   opacity: 0;
   transform: translateY(-10px);
   transition: opacity 0.35s, transform 0.35s;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  box-shadow: var(--shadow-lg);
+  border-radius: var(--radius-md);
+  padding: 8px 18px;
+  min-width: 90px;
 }
 #timer-hud.visible {
   opacity: 1;
@@ -103,49 +109,46 @@ const CSS = `
 }
 
 #timer-label {
-  font-size: 0.65rem;
-  font-weight: 600;
-  letter-spacing: 0.25em;
-  color: #666;
+  font-size: 0.7rem;
+  font-weight: 800;
+  letter-spacing: 0.2em;
+  color: var(--color-text-secondary);
   text-transform: uppercase;
   margin-bottom: 2px;
 }
 
 #timer-value {
-  font-size: 3rem;
+  font-size: 2.5rem;
   font-weight: 800;
-  font-family: 'Consolas', 'Courier New', monospace;
+  font-family: var(--font-family-mono);
   line-height: 1;
-  transition: color 0.35s, text-shadow 0.35s;
+  transition: color 0.25s;
 }
 
 /* ── Normal (60–21) ───────────────── */
 #timer-hud.normal #timer-value {
-  color: #d0d0d0;
-  text-shadow: 0 0 12px rgba(208,208,208,0.2);
+  color: var(--color-text);
 }
 
 /* ── Warning (20–11) ──────────────── */
 #timer-hud.warning #timer-value {
-  color: #ffaa33;
-  text-shadow: 0 0 16px rgba(255,170,51,0.35);
+  color: var(--color-warning);
 }
 #timer-hud.warning #timer-label {
-  color: #aa7722;
+  color: var(--color-warning);
 }
 
 /* ── Critical (10–0) ──────────────── */
 #timer-hud.critical #timer-value {
-  color: #ff3333;
-  text-shadow: 0 0 22px rgba(255,51,51,0.5);
+  color: var(--color-danger);
   animation: timer-pulse 0.7s ease-in-out infinite;
 }
 #timer-hud.critical #timer-label {
-  color: #cc3333;
+  color: var(--color-danger);
 }
 
 @keyframes timer-pulse {
   0%, 100% { transform: scale(1); }
-  50%      { transform: scale(1.1); }
+  50%      { transform: scale(1.08); }
 }
 `;
