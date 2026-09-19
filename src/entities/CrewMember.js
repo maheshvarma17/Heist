@@ -205,16 +205,17 @@ export class CrewMember {
   }
 
   /**
-   * Update floating label with player name and local ownership badge.
+   * Update floating label with player name, local ownership badge, and optional status tag.
    * @param {string} [playerName]
    * @param {boolean} [isLocal=false]
+   * @param {string} [statusTag=null]
    */
-  updatePlayerLabel(playerName, isLocal = false) {
-    this._drawLabel(playerName || this.name, isLocal);
+  updatePlayerLabel(playerName, isLocal = false, statusTag = null) {
+    this._drawLabel(playerName || this.name, isLocal, statusTag);
     this._setLocalIndicator(isLocal);
   }
 
-  _drawLabel(playerName, isLocal) {
+  _drawLabel(playerName, isLocal, statusTag = null) {
     if (!this._labelCanvas || !this._labelTexture) return;
     const ctx = this._labelCanvas.getContext('2d');
     ctx.clearRect(0, 0, 300, 90);
@@ -222,27 +223,34 @@ export class CrewMember {
     const accentHex = '#' + this._colors.accent.toString(16).padStart(6, '0');
 
     // Background pill (Light theme aesthetic with subtle border)
-    ctx.fillStyle = isLocal ? 'rgba(2, 132, 199, 0.90)' : 'rgba(255, 255, 255, 0.92)';
+    if (statusTag === 'ESCAPED') {
+      ctx.fillStyle = 'rgba(16, 185, 129, 0.95)';
+    } else {
+      ctx.fillStyle = isLocal ? 'rgba(2, 132, 199, 0.90)' : 'rgba(255, 255, 255, 0.92)';
+    }
     this._canvasRoundRect(ctx, 15, 6, 270, 78, 12);
     ctx.fill();
 
     // Border
     ctx.lineWidth = isLocal ? 3 : 2;
-    ctx.strokeStyle = isLocal ? '#ffffff' : accentHex;
+    ctx.strokeStyle = statusTag === 'ESCAPED' ? '#ffffff' : (isLocal ? '#ffffff' : accentHex);
     ctx.stroke();
 
     // Role text
-    ctx.font = 'bold 24px Inter, system-ui, Arial, sans-serif';
+    ctx.font = 'bold 22px Inter, system-ui, Arial, sans-serif';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.fillStyle = isLocal ? '#ffffff' : '#0f172a';
+    ctx.fillStyle = (isLocal || statusTag === 'ESCAPED') ? '#ffffff' : '#0f172a';
     
-    const roleText = isLocal ? `${this.role.toUpperCase()} (YOU)` : this.role.toUpperCase();
+    let roleText = isLocal ? `${this.role.toUpperCase()} (YOU)` : this.role.toUpperCase();
+    if (statusTag === 'ESCAPED') {
+      roleText = isLocal ? `${this.role.toUpperCase()} [ESCAPED]` : `${this.role.toUpperCase()} [ESCAPED]`;
+    }
     ctx.fillText(roleText, 150, 30);
 
     // Player name sub-text
     ctx.font = '600 18px Inter, system-ui, Arial, sans-serif';
-    ctx.fillStyle = isLocal ? '#e0f2fe' : '#475569';
+    ctx.fillStyle = (isLocal || statusTag === 'ESCAPED') ? '#ecfdf5' : '#475569';
     ctx.fillText(playerName || this.name, 150, 58);
 
     this._labelTexture.needsUpdate = true;

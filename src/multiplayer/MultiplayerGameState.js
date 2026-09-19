@@ -437,5 +437,19 @@ export class MultiplayerGameState {
         this.remoteStates.get(roleUpper).state = 'IDLE';
       }
     });
+
+    this.client.on('playerEscaped', (data) => {
+      const roleUpper = data.role ? data.role.toUpperCase() : null;
+      if (roleUpper) {
+        const member = this.crew.getByRole(roleUpper.toLowerCase());
+        if (member) {
+          const isLocal = Boolean(this.localPlayerRole && roleUpper === this.localPlayerRole);
+          member.updatePlayerLabel(data.playerName || member.name, isLocal, 'ESCAPED');
+        }
+        if (this.remoteStates.has(roleUpper)) {
+          this.remoteStates.get(roleUpper).state = 'COMPLETED';
+        }
+      }
+    });
   }
 }

@@ -450,3 +450,123 @@ html, body {
     box-shadow: 0 8px 20px rgba(2, 132, 199, 0.4);
   }
 }
+
+/* ── Escape HUD (Milestone 14) ──────────────────────────── */
+.escape-hud {
+  position: fixed;
+  top: 320px;
+  right: 24px;
+  width: 190px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-md);
+  padding: 14px 16px;
+  z-index: 100;
+  pointer-events: none;
+  transition: opacity var(--transition-normal), transform var(--transition-normal);
+  font-family: var(--font-family-base);
+}
+
+.escape-hud.hidden {
+  opacity: 0;
+  transform: translateY(-10px);
+  pointer-events: none;
+}
+
+.escape-hud-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: var(--color-text-secondary);
+  text-transform: uppercase;
+  margin-bottom: 8px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.escape-hud-icon {
+  font-size: 1rem;
+}
+
+.escape-hud-status {
+  font-size: 1.125rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-align: center;
+  padding: 4px 8px;
+  border-radius: var(--radius-md);
+  margin-bottom: 8px;
+  transition: all var(--transition-fast);
+}
+
+.escape-hud.escape-locked .escape-hud-status {
+  color: var(--color-text-muted);
+  background: var(--color-surface-secondary);
+  border: 1px solid var(--color-border);
+}
+
+.escape-hud.escape-available .escape-hud-status {
+  color: var(--color-success);
+  background: rgba(16, 185, 129, 0.12);
+  border: 1px solid rgba(16, 185, 129, 0.3);
+  animation: escapePulse 2s infinite ease-in-out;
+}
+
+.escape-hud.escape-escaping .escape-hud-status {
+  color: var(--color-warning);
+  background: rgba(245, 158, 11, 0.12);
+  border: 1px solid rgba(245, 158, 11, 0.3);
+}
+
+.escape-hud.escape-escaped .escape-hud-status {
+  color: #ffffff;
+  background: var(--color-success);
+  border: 1px solid var(--color-success);
+}
+
+.escape-hud-count {
+  font-size: 0.8125rem;
+  font-weight: 700;
+  text-align: center;
+  color: var(--color-text-secondary);
+  font-family: var(--font-family-mono);
+  background: var(--color-surface-secondary);
+  padding: 4px 8px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-border);
+}
+
+.escape-progress-bar {
+  width: 100%;
+  height: 6px;
+  background: var(--color-surface-secondary);
+  border-radius: var(--radius-full);
+  margin-top: 8px;
+  overflow: hidden;
+  border: 1px solid var(--color-border);
+}
+
+.escape-progress-bar.hidden {
+  display: none;
+}
+
+.escape-progress-fill {
+  height: 100%;
+  background: var(--color-success);
+  border-radius: var(--radius-full);
+  transition: width 0.1s linear;
+}
+
+@keyframes escapePulse {
+  0%, 100% {
+    box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.2);
+  }
+  50% {
+    box-shadow: 0 0 0 6px rgba(16, 185, 129, 0);
+  }
+}
+

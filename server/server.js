@@ -547,7 +547,68 @@ io.on('connection', (socket) => {
         roomCode: player.roomCode,
         loot: res.loot,
       });
+      io.to(player.roomCode).emit('escapeStateSnapshot', {
+        roomCode: player.roomCode,
+        escape: res.escape,
+      });
     }
+  });
+
+  // ═══════════════════════════════════════════════════════════
+  // ESCAPE SYSTEM EVENTS (Milestone 14)
+  // ═══════════════════════════════════════════════════════════
+
+  /**
+   * Handle: requestEscape
+   * Payload: { routeId: string }
+   */
+  socket.on('requestEscape', ({ routeId } = {}) => {
+    if (!player.roomCode) return socket.emit('escapeError', { message: 'You are not in a room.' });
+
+    const res = roomManager.requestEscape(player.roomCode, socket.id, routeId);
+    if (!res.success) {
+      return socket.emit('escapeError', { message: res.error || 'Failed to start escape.' });
+    }
+
+    console.log(`[Multiplayer] Escape started by ${player.name} (${player.role}) via ${res.routeName} in room ${player.roomCode}`);
+    io.to(player.roomCode).emit('escapeStarted', {
+      roomCode: player.roomCode,
+      playerId: res.playerId,
+      playerName: res.playerName,
+      role: res.role,
+      routeId: res.routeId,
+      routeName: res.routeName,
+      duration: res.duration,
+      escape: res.escape,
+    });
+  });
+
+  /**
+   * Handle: cancelEscape
+   */
+  socket.on('cancelEscape', () => {
+    if (!player.roomCode) return socket.emit('escapeError', { message: 'You are not in a room.' });
+
+    const res = roomManager.cancelEscape(player.roomCode, socket.id, 'Cancelled by player');
+    if (res.success) {
+      io.to(player.roomCode).emit('escapeCancelled', {
+        roomCode: player.roomCode,
+        playerId: res.playerId,
+        reason: res.reason,
+        escape: res.escape,
+      });
+    }
+  });
+
+  /**
+   * Handle: requestEscapeState
+   */
+  socket.on('requestEscapeState', () => {
+    if (!player.roomCode) return socket.emit('escapeError', { message: 'You are not in a room.' });
+    socket.emit('escapeStateSnapshot', {
+      roomCode: player.roomCode,
+      escape: roomManager.getEscapeSnapshot(player.roomCode),
+    });
   });
 
   // ═══════════════════════════════════════════════════════════
@@ -694,6 +755,23 @@ setInterval(() => {
         });
       } else if (sim.vaultEvent) {
         io.to(code).emit('vaultStateUpdated', sim.vaultEvent);
+      }
+
+      if (sim.escapeAvailableEvent) {
+        io.to(code).emit('escapeAvailable', sim.escapeAvailableEvent);
+      }
+
+      for (const evt of sim.escapeCancelledEvents) {
+        io.to(code).emit('escapeCancelled', evt);
+      }
+
+      for (const evt of sim.escapeProgressEvents) {
+        io.to(code).emit('escapeProgress', evt);
+      }
+
+      for (const evt of sim.playerEscapedEvents) {
+        console.log(`[Multiplayer] Player ${evt.playerName} (${evt.role}) ESCAPED via ${evt.routeName} in room ${code}`);
+        io.to(code).emit('playerEscaped', evt);
       }
     }
   }

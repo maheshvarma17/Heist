@@ -141,6 +141,25 @@ export const LOOT_CONFIGS = [
   { id: 'diamond_01', type: 'DIAMONDS', value: 500, position: { x: 0, y: 0.9, z: 5.0 } },
 ];
 
+export const ESCAPE_CONFIGS = {
+  frontExit: {
+    id: 'frontExit',
+    name: 'Front Exit',
+    position: { x: 0, y: 0, z: 21 },
+    radius: 3.0,
+    allowedRoles: ['THIEF', 'HACKER', 'DISTRACTOR', 'ENFORCER'],
+  },
+  rooftopExit: {
+    id: 'rooftopExit',
+    name: 'Rooftop Exit',
+    position: { x: 0, y: 4, z: -19 },
+    radius: 3.0,
+    allowedRoles: ['THIEF', 'HACKER', 'DISTRACTOR', 'ENFORCER'],
+  },
+};
+
+export const ESCAPE_DURATION = 2.0; // 2 seconds confirmation
+
 export class RoomManager {
   constructor() {
     /** @type {Map<string, Object>} roomCode -> room */
@@ -459,6 +478,7 @@ export class RoomManager {
       alarm: this.getAlarmSnapshot(room.code),
       vault: this.getVaultSnapshot(room.code),
       loot: this.getLootSnapshot(room.code),
+      escape: this.getEscapeSnapshot(room.code),
     };
   }
 
@@ -659,6 +679,7 @@ export class RoomManager {
       alarm: this.getAlarmSnapshot(room.code),
       vault: this.getVaultSnapshot(room.code),
       loot: this.getLootSnapshot(room.code),
+      escape: this.getEscapeSnapshot(room.code),
     };
   }
 
@@ -692,6 +713,11 @@ export class RoomManager {
     const player = room.players.find(p => p.socketId === socketId);
     if (!player) {
       return { success: false, error: 'Player not authorized in this room.' };
+    }
+
+    // Reject movement if player has already escaped
+    if (room.escape && room.escape.escapedPlayers && room.escape.escapedPlayers.includes(player.id)) {
+      return { success: false, error: 'Operative has already escaped and cannot move.' };
     }
 
     // Role ownership validation
@@ -832,6 +858,12 @@ export class RoomManager {
       };
     }
 
+    room.escape = {
+      state: 'LOCKED',
+      escapedPlayers: [],
+      activeEscapes: {},
+    };
+
     room.simulationActive = false;
   }
 
@@ -851,6 +883,7 @@ export class RoomManager {
       cameras: this.getCameraSnapshot(roomCode),
       vault: this.getVaultSnapshot(roomCode),
       loot: this.getLootSnapshot(roomCode),
+      escape: this.getEscapeSnapshot(roomCode),
     };
   }
 
@@ -1278,6 +1311,89 @@ export class RoomManager {
       }
     }
 
+    // ── 5. Multiplayer Escape System (Milestone 14) ──────────
+    let escapeAvailableEvent = null;
+    const escapeCancelledEvents = [];
+    const escapeProgressEvents = [];
+    const playerEscapedEvents = [];
+
+    // Automatically unlock escape when vault reaches OPEN
+    if (room.vault && room.vault.state === 'OPEN') {
+      if (!room.escape) {
+        room.escape = { state: 'LOCKED', escapedPlayers: [], activeEscapes: {} };
+      }
+      if (room.escape.state === 'LOCKED') {
+        room.escape.state = 'AVAILABLE';
+        escapeAvailableEvent = {
+          roomCode: room.code,
+          escape: this.getEscapeSnapshot(room.code),
+        };
+      }
+    }
+
+    if (room.escape && room.escape.activeEscapes) {
+      for (const [playerId, esc] of Object.entries(room.escape.activeEscapes)) {
+        const crew = room.crewStates[playerId];
+        const exitCfg = ESCAPE_CONFIGS[esc.routeId];
+        let cancelReason = null;
+
+        if (!crew || !crew.connected) {
+          cancelReason = 'Operative disconnected.';
+        } else if (crew.position && exitCfg) {
+          const dx = crew.position.x - exitCfg.position.x;
+          const dz = crew.position.z - exitCfg.position.z;
+          const dy = Math.abs(crew.position.y - exitCfg.position.y);
+          const dist = Math.sqrt(dx * dx + dz * dz);
+          if (dist > exitCfg.radius + 0.8 || dy > 3.0) {
+            cancelReason = 'Operative moved away from escape zone.';
+          }
+        }
+
+        if (cancelReason) {
+          delete room.escape.activeEscapes[playerId];
+          escapeCancelledEvents.push({
+            roomCode: room.code,
+            playerId,
+            reason: cancelReason,
+            escape: this.getEscapeSnapshot(room.code),
+          });
+        } else {
+          esc.timer += dt;
+          const prevProgress = esc.progress;
+          esc.progress = Math.min(100, Math.round((esc.timer / esc.duration) * 100));
+
+          if (esc.timer >= esc.duration) {
+            delete room.escape.activeEscapes[playerId];
+            if (!room.escape.escapedPlayers.includes(playerId)) {
+              room.escape.escapedPlayers.push(playerId);
+            }
+            if (crew) {
+              crew.state = 'COMPLETED';
+            }
+            const player = room.players.find(p => p.id === playerId);
+            playerEscapedEvents.push({
+              roomCode: room.code,
+              playerId,
+              playerName: player ? player.name : (crew ? crew.playerName : 'Operative'),
+              role: player ? player.role : (crew ? crew.role : 'UNKNOWN'),
+              routeId: esc.routeId,
+              routeName: exitCfg ? exitCfg.name : esc.routeId,
+              escapedCount: room.escape.escapedPlayers.length,
+              totalPlayers: room.players.length,
+              escape: this.getEscapeSnapshot(room.code),
+            });
+          } else if (esc.progress !== prevProgress) {
+            escapeProgressEvents.push({
+              roomCode: room.code,
+              playerId,
+              progress: esc.progress,
+              routeId: esc.routeId,
+            });
+          }
+        }
+      }
+    }
+
     return {
       guardUpdates,
       guardEvents,
@@ -1287,6 +1403,10 @@ export class RoomManager {
       vaultEvent,
       vaultOpenedEvent,
       vaultCancelledEvent,
+      escapeAvailableEvent,
+      escapeCancelledEvents,
+      escapeProgressEvents,
+      playerEscapedEvents,
     };
   }
 
@@ -1303,6 +1423,10 @@ export class RoomManager {
 
     const player = room.players.find(p => p.socketId === socketId);
     if (!player || !player.connected) return { success: false, error: 'Player not connected or authorized in this room.' };
+
+    if (room.escape && room.escape.escapedPlayers && room.escape.escapedPlayers.includes(player.id)) {
+      return { success: false, error: 'Operative has already escaped.' };
+    }
 
     if (!VAULT_CONFIG.allowedRoles.includes(player.role)) {
       return { success: false, error: 'Only the Thief or Hacker can open the vault.' };
@@ -1390,6 +1514,10 @@ export class RoomManager {
 
     const player = room.players.find(p => p.socketId === socketId);
     if (!player || !player.connected) return { success: false, error: 'Player not connected or authorized in this room.' };
+
+    if (room.escape && room.escape.escapedPlayers && room.escape.escapedPlayers.includes(player.id)) {
+      return { success: false, error: 'Operative has already escaped.' };
+    }
 
     if (!room.vault || room.vault.state !== 'OPEN') {
       return { success: false, error: 'The vault must be open before collecting loot.' };
@@ -1539,6 +1667,125 @@ export class RoomManager {
   }
 
   /**
+   * Request to escape through a designated exit route.
+   * @param {string} roomCode
+   * @param {string} socketId
+   * @param {string} routeId
+   * @returns {{ success: boolean, playerId?: string, playerName?: string, role?: string, routeId?: string, routeName?: string, duration?: number, escape?: Object, error?: string }}
+   */
+  requestEscape(roomCode, socketId, routeId) {
+    const room = this.getRoom(roomCode);
+    if (!room) return { success: false, error: 'Room not found.' };
+    if (room.status !== ROOM_STATUS.PLAYING) return { success: false, error: 'The heist is not currently running.' };
+
+    const player = room.players.find(p => p.socketId === socketId);
+    if (!player || !player.connected) return { success: false, error: 'Player not connected or authorized in this room.' };
+
+    if (!room.escape) {
+      this.initRoomSimulationState(room);
+    }
+
+    if (room.escape.state !== 'AVAILABLE') {
+      return { success: false, error: 'Escape routes are locked. Vault must be opened first.' };
+    }
+
+    if (room.escape.escapedPlayers.includes(player.id)) {
+      return { success: false, error: 'Operative has already escaped.' };
+    }
+
+    if (room.escape.activeEscapes[player.id]) {
+      return { success: false, error: 'Escape is already in progress.' };
+    }
+
+    const exitCfg = ESCAPE_CONFIGS[routeId];
+    if (!exitCfg) {
+      return { success: false, error: `Invalid escape route: ${routeId}.` };
+    }
+
+    const crewState = room.crewStates[player.id];
+    if (!crewState || !crewState.position) {
+      return { success: false, error: 'Crew position not found.' };
+    }
+
+    const dx = crewState.position.x - exitCfg.position.x;
+    const dz = crewState.position.z - exitCfg.position.z;
+    const dy = Math.abs(crewState.position.y - exitCfg.position.y);
+    const dist = Math.sqrt(dx * dx + dz * dz);
+
+    if (dist > exitCfg.radius || dy > 2.5) {
+      return { success: false, error: `Move closer to the ${exitCfg.name} zone.` };
+    }
+
+    room.escape.activeEscapes[player.id] = {
+      routeId,
+      timer: 0,
+      duration: ESCAPE_DURATION,
+      progress: 0,
+    };
+
+    return {
+      success: true,
+      playerId: player.id,
+      playerName: player.name,
+      role: player.role,
+      routeId,
+      routeName: exitCfg.name,
+      duration: ESCAPE_DURATION,
+      escape: this.getEscapeSnapshot(roomCode),
+    };
+  }
+
+  /**
+   * Cancel active escape attempt.
+   * @param {string} roomCode
+   * @param {string} socketId
+   * @param {string} [reason]
+   * @returns {{ success: boolean, playerId?: string, reason?: string, escape?: Object, error?: string }}
+   */
+  cancelEscape(roomCode, socketId, reason = 'Cancelled') {
+    const room = this.getRoom(roomCode);
+    if (!room || !room.escape) return { success: false, error: 'Room or escape system not found.' };
+
+    const player = room.players.find(p => p.socketId === socketId);
+    if (!player) return { success: false, error: 'Player not found in room.' };
+
+    if (room.escape.activeEscapes[player.id]) {
+      delete room.escape.activeEscapes[player.id];
+      return {
+        success: true,
+        playerId: player.id,
+        reason,
+        escape: this.getEscapeSnapshot(roomCode),
+      };
+    }
+
+    return { success: false, error: 'No active escape in progress for player.' };
+  }
+
+  /**
+   * Get current escape state object for room.
+   * @param {string} roomCode
+   * @returns {Object}
+   */
+  getEscapeSnapshot(roomCode) {
+    const room = this.getRoom(roomCode);
+    if (!room || !room.escape) {
+      return {
+        state: 'LOCKED',
+        escapedPlayers: [],
+        activeEscapes: {},
+        routes: ESCAPE_CONFIGS,
+      };
+    }
+    return {
+      state: room.escape.state,
+      escapedPlayers: [...room.escape.escapedPlayers],
+      activeEscapes: { ...room.escape.activeEscapes },
+      routes: ESCAPE_CONFIGS,
+    };
+  }
+
+  /**
    * Formats a clean public room payload for clients.
    * @param {Object} room
    * @returns {Object}
@@ -1561,6 +1808,7 @@ export class RoomManager {
       alarm: room.alarm ? { level: room.alarm.level, state: room.alarm.state } : { level: 0, state: 'NORMAL' },
       vault: this.getVaultSnapshot(room.code),
       loot: this.getLootSnapshot(room.code),
+      escape: this.getEscapeSnapshot(room.code),
     };
   }
 }

@@ -185,14 +185,45 @@ TEAM PLANS ➔ HEIST STARTS ➔ REACH VAULT ➔ OPEN VAULT (5s) ➔ LOOT AVAILAB
   * Collected items are instantly hidden and synchronized across all clients.
 * **Light Theme HUDs & Prompts**:
   * **Vault HUD**: Displays `VAULT: LOCKED` / `OPENING XX%` / `OPEN` with a live progress bar.
-  * **Loot HUD**: Displays real-time counts (`CASH 0/3`, `GOLD 0/2`, `DIAMONDS 0/1`) and accumulated `LOOT VALUE`. *(Note: Scoring and Escape are not implemented yet).*
-  * **Interaction Prompt**: Dynamic floating banner displaying `[E] OPEN VAULT`, `[E] COLLECT CASH ($100)`, etc.
+  * **Loot HUD**: Displays real-time counts (`CASH 0/3`, `GOLD 0/2`, `DIAMONDS 0/1`) and accumulated `LOOT VALUE`.
+  * **Interaction Prompt**: Dynamic floating banner displaying `[E] OPEN VAULT`, `[E] COLLECT CASH ($100)`, `[E] ESCAPE VIA FRONT EXIT`, etc.
 
 ---
 
-## Current Multiplayer Scope & Limitations (Milestone 13)
+## Multiplayer Escape System (Milestone 14)
 
-- **Synchronized in Milestone 13**:
+```
+INFILTRATE ➔ REACH VAULT ➔ OPEN VAULT ➔ COLLECT LOOT ➔ ESCAPE UNLOCKED (AVAILABLE) 
+     │
+     ├── Front Exit Zone (0, 0, 21) ───────┐
+     └── Rooftop Exit Zone (0, 4, -19) ────┼── [E] ESCAPE ── 2.0s Confirmation ── [ESCAPED] (Locked)
+```
+
+* **Authoritative Exit Routes**:
+  * **Front Exit**: `(0, 0, 21)`, radius 3.0 world units.
+  * **Rooftop Exit**: `(0, 4, -19)`, radius 3.0 world units.
+* **Automatic Unlock**:
+  * Escape routes unlock authoritatively (`AVAILABLE`) when `vault.state === 'OPEN'`.
+  * Operatives can escape independently at any time once unlocked (does not require collecting all loot).
+* **3D Procedural Beacon Zones**:
+  * Dual-zone visual floor rings, translucent green columns, and rotating beacon markers.
+  * Dynamically tint from neutral slate (LOCKED) to vibrant glowing emerald (AVAILABLE).
+* **Proximity & Confirmation Flow**:
+  * Moving within 3.0m of an exit zone presents `[E] ESCAPE VIA [ROUTE]`.
+  * Pressing `[E]` begins a 2.0-second confirmation duration with live progress feedback (`ESCAPING XX%`).
+  * Moving away from the zone (`> 3.8m`) or disconnecting cleanly cancels the active attempt.
+* **Escaped Operatives**:
+  * Marked as `COMPLETED` / `ESCAPED` on the server.
+  * Locked from further movement, loot collection, or vault interactions.
+  * Retains 3D character visibility with an emerald `[ESCAPED]` badge above the operative.
+* **Escape HUD**:
+  * Light theme card displaying `LOCKED`, `AVAILABLE (X/4 ESCAPED)`, `ESCAPING XX%`, or `ESCAPED`.
+
+---
+
+## Current Multiplayer Scope & Limitations (Milestone 14)
+
+- **Synchronized in Milestone 14**:
   - Player identities, lobby rooms, role assignment, and lobby ready states.
   - Server-authoritative **Shared Team Plan** (`THIEF`, `HACKER`, `DISTRACTOR`, `ENFORCER`).
   - Strict role-based action validation and planning ready state tracking.
@@ -202,12 +233,12 @@ TEAM PLANS ➔ HEIST STARTS ➔ REACH VAULT ➔ OPEN VAULT (5s) ➔ LOOT AVAILAB
   - Server-authoritative **Alarm System** (0–100% level, 5 danger states, +20/+15 increments, -5/3s decay).
   - Server-authoritative **Vault System** (LOCKED, OPENING 5s duration, OPEN, Thief/Hacker authorization, proximity cancellation).
   - Server-authoritative **Loot System** (6 items: Cash, Gold, Diamonds, proximity checks, duplicate protection, instant network removal).
-  - Synchronized Vault HUD, Loot HUD, and [E] interaction prompts.
+  - Server-authoritative **Escape System** (Front Exit & Rooftop Exit, 2.0s confirmation, individual escape tracking, movement/action lock).
+  - Synchronized Vault HUD, Loot HUD, Escape HUD, and [E] interaction prompts.
   - Crew movement synchronization (12.5 Hz) and remote character interpolation.
-- **Out of Scope in Milestone 13**:
-  - Escape zones and vehicle pickup.
-  - Final win/fail scoring system.
-  - Police response.
+- **Out of Scope in Milestone 14**:
+  - Final scoring & end-game summary modal.
+  - Police pursuit vehicle response.
   - Hacker camera disabling.
   - Combat and subduing guards.
 
@@ -223,14 +254,14 @@ HEIST-60-SECONDS/
 ├── server/               # Multiplayer backend
 │   ├── server.js         # Express + Socket.IO server, 20 Hz simulation loop & handlers
 │   ├── rooms/
-│   │   └── RoomManager.js # Room lifecycle, team planning, authoritative guards, cameras, alarm, vault & loot
+│   │   └── RoomManager.js # Room lifecycle, team planning, authoritative guards, cameras, alarm, vault, loot & escape
 │   └── players/
 │       └── PlayerManager.js
 ├── src/
 │   ├── main.js           # App bootstrap & lobby-game handoff
 │   ├── style.css         # Global Light UI design system & CSS variables
 │   ├── multiplayer/
-│   │   ├── MultiplayerClient.js    # Socket.IO client interface (vault & loot events)
+│   │   ├── MultiplayerClient.js    # Socket.IO client interface (vault, loot & escape events)
 │   │   ├── MultiplayerState.js     # Client session state
 │   │   └── MultiplayerGameState.js # Crew & guard sync, throttling & remote lerp
 │   ├── game/
@@ -241,14 +272,15 @@ HEIST-60-SECONDS/
 │   │   ├── GuardRoutes.js
 │   │   └── Constants.js
 │   ├── entities/         # Crew, Guards, SecurityCameras
-│   ├── systems/          # MovementSystem, ActionQueue, ActionSystem, Timer, GuardSystem, CameraSystem, AlarmSystem, VaultSystem, LootSystem
+│   ├── systems/          # MovementSystem, ActionQueue, ActionSystem, Timer, GuardSystem, CameraSystem, AlarmSystem, VaultSystem, LootSystem, EscapeSystem
 │   └── ui/
 │       ├── MultiplayerUI.js # Light theme lobby, name & join modals
 │       ├── PlannerUI.js     # Light theme shared team strategy planner panel
 │       ├── TimerHUD.js      # Light theme countdown timer display
 │       ├── AlarmHUD.js      # Light theme shared alarm level & detection HUD
 │       ├── VaultHUD.js      # Light theme vault status & interaction prompt
-│       └── LootHUD.js       # Light theme team loot collection breakdown
+│       ├── LootHUD.js       # Light theme team loot collection breakdown
+│       └── EscapeHUD.js     # Light theme escape status & team progress HUD
 └── test/
-    └── multiplayer.test.js # 16 automated integration tests for Milestone 13
+    └── multiplayer.test.js # 19 automated integration tests for Milestone 14
 ```

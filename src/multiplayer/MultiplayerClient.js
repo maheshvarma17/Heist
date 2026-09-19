@@ -198,6 +198,36 @@ export class MultiplayerClient {
       this._emitLocal('lootError', data);
     });
 
+    // ─── Escape System Events (Milestone 14) ──────────────
+    this.socket.on('escapeAvailable', (data) => {
+      this._emitLocal('escapeAvailable', data);
+    });
+
+    this.socket.on('escapeStarted', (data) => {
+      this._emitLocal('escapeStarted', data);
+    });
+
+    this.socket.on('playerEscaped', (data) => {
+      this._emitLocal('playerEscaped', data);
+    });
+
+    this.socket.on('escapeCancelled', (data) => {
+      this._emitLocal('escapeCancelled', data);
+    });
+
+    this.socket.on('escapeProgress', (data) => {
+      this._emitLocal('escapeProgress', data);
+    });
+
+    this.socket.on('escapeStateSnapshot', (data) => {
+      this._emitLocal('escapeStateSnapshot', data);
+    });
+
+    this.socket.on('escapeError', (data) => {
+      this.state.lastError = data.message;
+      this._emitLocal('escapeError', data);
+    });
+
     this.socket.on('planningError', (data) => {
       this._emitLocal('planningError', data);
     });
@@ -367,6 +397,26 @@ export class MultiplayerClient {
   resetSimulation() {
     if (this.socket && this.socket.connected) {
       this.socket.emit('resetSimulation');
+    }
+  }
+
+  // ─── Escape System Requests (Milestone 14) ──────────────
+
+  requestEscape(routeId) {
+    if (this.socket && this.socket.connected) {
+      this.socket.emit('requestEscape', { routeId });
+    }
+  }
+
+  cancelEscape() {
+    if (this.socket && this.socket.connected) {
+      this.socket.emit('cancelEscape');
+    }
+  }
+
+  requestEscapeState() {
+    if (this.socket && this.socket.connected) {
+      this.socket.emit('requestEscapeState');
     }
   }
 

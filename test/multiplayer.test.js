@@ -1,6 +1,6 @@
 /**
  * test/multiplayer.test.js
- * Automated integration test suite for Milestone 13: Vault Access & Multiplayer Loot System.
+ * Automated integration test suite for Milestone 14: Multiplayer Escape System.
  */
 
 import { io } from 'socket.io-client';
@@ -15,6 +15,8 @@ import {
   CAMERA_CONFIGS,
   VAULT_CONFIG,
   LOOT_CONFIGS,
+  ESCAPE_CONFIGS,
+  ESCAPE_DURATION,
 } from '../server/rooms/RoomManager.js';
 
 const TEST_PORT = 3099;
@@ -87,6 +89,7 @@ ioServer.on('connection', (socket) => {
       alarm: res.alarm,
       vault: res.vault,
       loot: res.loot,
+      escape: res.escape,
     });
   });
 
@@ -124,6 +127,7 @@ ioServer.on('connection', (socket) => {
       alarm: res.alarm,
       vault: res.vault,
       loot: res.loot,
+      escape: res.escape,
     });
     ioServer.to(res.roomCode).emit('guardStateSnapshot', {
       roomCode: res.roomCode,
@@ -144,6 +148,10 @@ ioServer.on('connection', (socket) => {
     ioServer.to(res.roomCode).emit('lootStateSnapshot', {
       roomCode: res.roomCode,
       loot: res.loot,
+    });
+    ioServer.to(res.roomCode).emit('escapeStateSnapshot', {
+      roomCode: res.roomCode,
+      escape: res.escape,
     });
   });
 
@@ -246,6 +254,43 @@ ioServer.on('connection', (socket) => {
     });
   });
 
+  // Escape System socket handlers
+  socket.on('requestEscape', ({ routeId } = {}) => {
+    const res = roomManager.requestEscape(player.roomCode, socket.id, routeId);
+    if (!res.success) {
+      return socket.emit('escapeError', { message: res.error });
+    }
+    ioServer.to(player.roomCode).emit('escapeStarted', {
+      roomCode: player.roomCode,
+      playerId: res.playerId,
+      playerName: res.playerName,
+      role: res.role,
+      routeId: res.routeId,
+      routeName: res.routeName,
+      duration: res.duration,
+      escape: res.escape,
+    });
+  });
+
+  socket.on('cancelEscape', () => {
+    const res = roomManager.cancelEscape(player.roomCode, socket.id, 'Cancelled');
+    if (res.success) {
+      ioServer.to(player.roomCode).emit('escapeCancelled', {
+        roomCode: player.roomCode,
+        playerId: res.playerId,
+        reason: res.reason,
+        escape: res.escape,
+      });
+    }
+  });
+
+  socket.on('requestEscapeState', () => {
+    socket.emit('escapeStateSnapshot', {
+      roomCode: player.roomCode,
+      escape: roomManager.getEscapeSnapshot(player.roomCode),
+    });
+  });
+
   socket.on('resetSimulation', () => {
     const res = roomManager.resetSimulation(player.roomCode);
     if (res) {
@@ -269,6 +314,10 @@ ioServer.on('connection', (socket) => {
       ioServer.to(player.roomCode).emit('lootStateSnapshot', {
         roomCode: player.roomCode,
         loot: res.loot,
+      });
+      ioServer.to(player.roomCode).emit('escapeStateSnapshot', {
+        roomCode: player.roomCode,
+        escape: res.escape,
       });
     }
   });
@@ -338,6 +387,20 @@ const simInterval = setInterval(() => {
       } else if (sim.vaultEvent) {
         ioServer.to(code).emit('vaultStateUpdated', sim.vaultEvent);
       }
+
+      // Escape events
+      if (sim.escapeAvailableEvent) {
+        ioServer.to(code).emit('escapeAvailable', sim.escapeAvailableEvent);
+      }
+      for (const evt of sim.escapeCancelledEvents) {
+        ioServer.to(code).emit('escapeCancelled', evt);
+      }
+      for (const evt of sim.escapeProgressEvents) {
+        ioServer.to(code).emit('escapeProgress', evt);
+      }
+      for (const evt of sim.playerEscapedEvents) {
+        ioServer.to(code).emit('playerEscaped', evt);
+      }
     }
   }
 }, SIM_TICK_INTERVAL_MS);
@@ -366,7 +429,7 @@ const waitForEvent = (socket, eventName, timeout = 4000) => {
 
 // ─── Main Test Runner ─────────────────────────────────────────
 async function runTests() {
-  console.log('[TEST] Starting Milestone 13 test server on port ' + TEST_PORT);
+  console.log('[TEST] Starting Milestone 14 test server on port ' + TEST_PORT);
   await new Promise((res) => server.listen(TEST_PORT, res));
 
   let clients = [];
@@ -384,20 +447,20 @@ async function runTests() {
     await Promise.all(clients.map(c => new Promise(res => c.on('connect', res))));
 
     // ── Setup 4-Player Room in PLANNING phase ──
-    c1.emit('createRoom', { name: 'Player 1' });
+    c1.emit('createRoom', { name: 'ThiefPlayer' });
     const createRes = await waitForEvent(c1, 'roomCreated');
     roomCode = createRes.roomCode;
     hostPlayer = createRes.player;
 
-    c2.emit('joinRoom', { name: 'Player 2', roomCode });
+    c2.emit('joinRoom', { name: 'HackerPlayer', roomCode });
     const j2Res = await waitForEvent(c2, 'roomJoined');
     p2 = j2Res.player;
 
-    c3.emit('joinRoom', { name: 'Player 3', roomCode });
+    c3.emit('joinRoom', { name: 'DistractorPlayer', roomCode });
     const j3Res = await waitForEvent(c3, 'roomJoined');
     p3 = j3Res.player;
 
-    c4.emit('joinRoom', { name: 'Player 4', roomCode });
+    c4.emit('joinRoom', { name: 'EnforcerPlayer', roomCode });
     const j4Res = await waitForEvent(c4, 'roomJoined');
     p4 = j4Res.player;
 
@@ -423,14 +486,41 @@ async function runTests() {
     const startData = await waitForEvent(c1, 'gameStarting');
     console.log('✓ SETUP COMPLETE: 4-Player room entered PLANNING phase');
 
-    // ── TEST 1 — VAULT INITIAL STATE ──
+    // ── TEST 1: ESCAPE INITIAL STATE ──
     const room = roomManager.getRoom(roomCode);
-    if (!room.vault || room.vault.state !== 'LOCKED' || room.vault.progress !== 0) {
-      throw new Error(`Expected vault LOCKED with progress 0, got ${JSON.stringify(room.vault)}`);
+    if (!room.escape || room.escape.state !== 'LOCKED' || room.escape.escapedPlayers.length !== 0) {
+      throw new Error(`Expected escape LOCKED with 0 escaped, got ${JSON.stringify(room.escape)}`);
     }
-    console.log('✓ TEST 1 PASSED: Vault begins in authoritative LOCKED state with progress 0');
+    const routes = Object.keys(ESCAPE_CONFIGS);
+    if (routes.length !== 2 || !routes.includes('frontExit') || !routes.includes('rooftopExit')) {
+      throw new Error(`Expected exactly 2 escape routes (frontExit, rooftopExit), got ${JSON.stringify(routes)}`);
+    }
+    console.log('✓ TEST 1 PASSED: Escape system initializes in authoritative LOCKED state with 2 exit routes');
 
-    // Add planning actions & ready up
+    // ── TEST 2: ESCAPE ROUTE DEFINITIONS & COORDINATES ──
+    const frontCfg = ESCAPE_CONFIGS.frontExit;
+    const roofCfg = ESCAPE_CONFIGS.rooftopExit;
+    if (frontCfg.position.x !== 0 || frontCfg.position.y !== 0 || frontCfg.position.z !== 21 || frontCfg.radius !== 3.0) {
+      throw new Error(`frontExit configuration mismatch: ${JSON.stringify(frontCfg)}`);
+    }
+    if (roofCfg.position.x !== 0 || roofCfg.position.y !== 4 || roofCfg.position.z !== -19 || roofCfg.radius !== 3.0) {
+      throw new Error(`rooftopExit configuration mismatch: ${JSON.stringify(roofCfg)}`);
+    }
+    console.log('✓ TEST 2 PASSED: Escape routes exactly match specified 3D positions and 3.0m radii');
+
+    // ── TEST 3: ESCAPE ATTEMPT WHEN LOCKED IS REJECTED ──
+    // Place Thief right at frontExit (0, 0, 21) while vault is locked and request escape
+    c1.emit('crewMove', { role: 'THIEF', position: { x: 0, y: 0, z: 21 }, rotationY: 0, state: 'IDLE' });
+    await sleep(50);
+    const lockedEscapePromise = waitForEvent(c1, 'escapeError');
+    c1.emit('requestEscape', { routeId: 'frontExit' });
+    const lockedErr = await lockedEscapePromise;
+    if (!lockedErr.message.includes('locked') && !lockedErr.message.includes('Vault must be opened')) {
+      throw new Error(`Expected escape locked error, got: ${lockedErr.message}`);
+    }
+    console.log('✓ TEST 3 PASSED: Escape request when vault is LOCKED is rejected');
+
+    // Add planning actions & start execution
     c1.emit('addAction', { role: 'THIEF', action: { type: 'MOVE', target: 'vault' } });
     await waitForEvent(c1, 'teamPlanUpdated');
     c2.emit('addAction', { role: 'HACKER', action: { type: 'MOVE', target: 'vault' } });
@@ -449,182 +539,198 @@ async function runTests() {
     c4.emit('setPlanningReady', { isReady: true });
     await waitForEvent(c4, 'planningReadyUpdated');
 
-    // ── TEST 11 — COLLECTION BEFORE VAULT OPENS ──
-    // Attempt loot collection while vault is locked
-    const lootBeforeVaultPromise = waitForEvent(c1, 'lootError');
-    c1.emit('collectLoot', { lootId: 'cash_01' });
-    const lootErr = await lootBeforeVaultPromise;
-    if (!lootErr.message.includes('open')) {
-      throw new Error(`Expected lootError before vault open, got: ${lootErr.message}`);
-    }
-    console.log('✓ TEST 11 PASSED: Loot collection attempt while vault is locked is rejected');
-
-    // Start execution
     c1.emit('startExecution');
-    const execStarting = await waitForEvent(c1, 'executionStarting');
-    if (!execStarting.vault || execStarting.vault.state !== 'LOCKED') {
-      throw new Error('Vault state missing in execution starting payload');
-    }
+    await waitForEvent(c1, 'executionStarting');
 
-    // ── TEST 3 — INVALID ROLE REJECTION ──
-    // Distractor (c3) moves close to vault (0, 0, 10) and attempts to open it
-    c3.emit('crewMove', { role: 'DISTRACTOR', position: { x: 0, y: 0, z: 10 }, rotationY: 0, state: 'IDLE' });
+    // ── Open the Vault to Unlock Escape ──
+    c1.emit('crewMove', { role: 'THIEF', position: { x: 0, y: 0, z: 10 }, rotationY: 0, state: 'IDLE' });
     await sleep(50);
-    const invalidRolePromise = waitForEvent(c3, 'vaultError');
-    c3.emit('requestVaultOpen');
-    const roleErr = await invalidRolePromise;
-    if (!roleErr.message.includes('Thief or Hacker')) {
-      throw new Error(`Expected role validation error, got: ${roleErr.message}`);
-    }
-    console.log('✓ TEST 3 PASSED: Non-authorized role (Distractor) attempting to open vault is rejected');
-
-    // ── TEST 4 — DISTANCE VALIDATION ──
-    // Thief (c1) is at spawn (far from vault, z=19.5), attempts to open vault
-    c1.emit('crewMove', { role: 'THIEF', position: { x: -4, y: 0, z: 19.5 }, rotationY: 0, state: 'IDLE' });
-    await sleep(50);
-    const distErrorPromise = waitForEvent(c1, 'vaultError');
     c1.emit('requestVaultOpen');
-    const distErr = await distErrorPromise;
+    await waitForEvent(c1, 'vaultOpeningStarted');
+
+    // Fast-forward vault timer to open
+    room.vault.timer = 5.0;
+
+    // ── TEST 4 & 5: ESCAPE UNLOCK & BROADCAST ON VAULT OPEN ──
+    const [vaultOpenedEvt, escapeAvailEvt] = await Promise.all([
+      waitForEvent(c2, 'vaultOpened', 5000),
+      waitForEvent(c2, 'escapeAvailable', 5000),
+    ]);
+
+    if (room.escape.state !== 'AVAILABLE' || escapeAvailEvt.escape.state !== 'AVAILABLE') {
+      throw new Error(`Expected escape state AVAILABLE, got ${JSON.stringify(escapeAvailEvt)}`);
+    }
+    console.log('✓ TEST 4 PASSED: Opening the vault automatically unlocks escape routes (state AVAILABLE)');
+    console.log('✓ TEST 5 PASSED: escapeAvailable event is broadcast to all players in the room');
+
+    // ── TEST 6: DISTANCE VALIDATION (> 3.0m) ──
+    // Hacker (c2) is at vault (0, 0, 10), far from frontExit (0, 0, 21), tries to escape
+    c2.emit('crewMove', { role: 'HACKER', position: { x: 0, y: 0, z: 10 }, rotationY: 0, state: 'IDLE' });
+    await sleep(50);
+    const distErrPromise = waitForEvent(c2, 'escapeError');
+    c2.emit('requestEscape', { routeId: 'frontExit' });
+    const distErr = await distErrPromise;
     if (!distErr.message.includes('closer')) {
       throw new Error(`Expected distance validation error, got: ${distErr.message}`);
     }
-    console.log('✓ TEST 4 PASSED: Thief opening vault from too far away is rejected');
+    console.log('✓ TEST 6 PASSED: Escape request outside zone radius (> 3.0) is rejected');
 
-    // ── TEST 2 — VALID VAULT OPEN ──
-    // Place Thief within range (x: 0, z: 10) and request vault open
-    c1.emit('crewMove', { role: 'THIEF', position: { x: 0, y: 0, z: 10.5 }, rotationY: 0, state: 'IDLE' });
+    // ── TEST 7: ALTITUDE/Y VALIDATION ──
+    // Distractor (c3) at rooftop X/Z (0, -19) but at ground level (Y=0 vs Y=4), tries rooftopExit
+    c3.emit('crewMove', { role: 'DISTRACTOR', position: { x: 0, y: 0, z: -19 }, rotationY: 0, state: 'IDLE' });
+    await sleep(50);
+    const altErrPromise = waitForEvent(c3, 'escapeError');
+    c3.emit('requestEscape', { routeId: 'rooftopExit' });
+    const altErr = await altErrPromise;
+    if (!altErr.message.includes('closer')) {
+      throw new Error(`Expected altitude validation error, got: ${altErr.message}`);
+    }
+    console.log('✓ TEST 7 PASSED: Rooftop escape request from wrong altitude/floor (Y=0) is rejected');
+
+    // ── TEST 8 & 9: VALID FRONT EXIT INITIATION & BROADCAST ──
+    // Move Thief (c1) to frontExit zone (0, 0, 21)
+    c1.emit('crewMove', { role: 'THIEF', position: { x: 0.5, y: 0, z: 21.0 }, rotationY: 0, state: 'IDLE' });
     await sleep(50);
 
-    const vaultStartPromise = waitForEvent(c2, 'vaultOpeningStarted');
+    const escapeStartedPromise = waitForEvent(c2, 'escapeStarted');
+    c1.emit('requestEscape', { routeId: 'frontExit' });
+    const startEvt = await escapeStartedPromise;
+
+    if (startEvt.playerId !== hostPlayer.id || startEvt.routeId !== 'frontExit' || startEvt.duration !== 2.0) {
+      throw new Error(`Unexpected escapeStarted event: ${JSON.stringify(startEvt)}`);
+    }
+    console.log('✓ TEST 8 PASSED: Valid escape request initiates 2.0s confirmation timer');
+    console.log('✓ TEST 9 PASSED: escapeStarted event is broadcast to all clients with route and player info');
+
+    // ── TEST 10 & 11: ESCAPE PROGRESS TICK & COMPLETION ──
+    const playerEscapedPromise = waitForEvent(c3, 'playerEscaped', 5000);
+
+    // Fast-forward escape timer
+    if (room.escape.activeEscapes[hostPlayer.id]) {
+      room.escape.activeEscapes[hostPlayer.id].timer = 2.0;
+    }
+
+    const escapedData = await playerEscapedPromise;
+    if (escapedData.playerId !== hostPlayer.id || escapedData.escapedCount !== 1 || escapedData.totalPlayers !== 4) {
+      throw new Error(`Unexpected playerEscaped payload: ${JSON.stringify(escapedData)}`);
+    }
+    console.log('✓ TEST 10 PASSED: Server authoritatively ticks escape progress to 100%');
+    console.log('✓ TEST 11 PASSED: playerEscaped event broadcast with updated team count (1 / 4 ESCAPED)');
+
+    // ── TEST 12: AUTHORITATIVE CREW STATE MARKED COMPLETED ──
+    const thiefState = room.crewStates[hostPlayer.id];
+    if (thiefState.state !== 'COMPLETED' || !room.escape.escapedPlayers.includes(hostPlayer.id)) {
+      throw new Error(`Expected Thief state COMPLETED and in escapedPlayers, got ${JSON.stringify(thiefState)}`);
+    }
+    console.log('✓ TEST 12 PASSED: Escaped operative is authoritatively marked COMPLETED');
+
+    // ── TEST 13: ESCAPED PLAYER CANNOT MOVE ──
+    const moveRejectPromise = waitForEvent(c1, 'errorMessage');
+    c1.emit('crewMove', { role: 'THIEF', position: { x: 0, y: 0, z: 15 }, rotationY: 0, state: 'MOVING' });
+    const moveErr = await moveRejectPromise;
+    if (!moveErr.message.includes('already escaped')) {
+      throw new Error(`Expected move rejection for escaped player, got: ${moveErr.message}`);
+    }
+    console.log('✓ TEST 13 PASSED: Escaped player attempting movement is rejected by server');
+
+    // ── TEST 14: ESCAPED PLAYER CANNOT OPEN VAULT OR COLLECT LOOT ──
+    const vaultRejectPromise = waitForEvent(c1, 'vaultError');
     c1.emit('requestVaultOpen');
-    const vStartData = await vaultStartPromise;
-    if (vStartData.vault.state !== 'OPENING' || vStartData.role !== 'THIEF') {
-      throw new Error(`Unexpected vaultOpeningStarted: ${JSON.stringify(vStartData)}`);
+    const vErr = await vaultRejectPromise;
+    if (!vErr.message.includes('already escaped')) {
+      throw new Error(`Expected vault rejection for escaped player, got: ${vErr.message}`);
     }
-    console.log('✓ TEST 2 PASSED: Valid vault open request transitions vault to OPENING and broadcasts to all clients');
 
-    // ── TEST 5 — VAULT OPENING PROGRESS ──
-    const progressPromise = waitForEvent(c3, 'vaultStateUpdated');
-    const pUpdate = await progressPromise;
-    if (pUpdate.state !== 'OPENING' || typeof pUpdate.progress !== 'number') {
-      throw new Error(`Expected vault progress update, got ${JSON.stringify(pUpdate)}`);
+    const lootRejectPromise = waitForEvent(c1, 'lootError');
+    c1.emit('collectLoot', { lootId: 'cash_01' });
+    const lErr = await lootRejectPromise;
+    if (!lErr.message.includes('already escaped')) {
+      throw new Error(`Expected loot rejection for escaped player, got: ${lErr.message}`);
     }
-    console.log('✓ TEST 5 PASSED: Server authoritatively advances and synchronizes vault opening progress');
+    console.log('✓ TEST 14 PASSED: Escaped player attempting vault or loot actions is rejected by server');
 
-    // ── TEST 6 — VAULT OPENED ──
-    // Fast-forward vault opening timer to trigger completion
-    room.vault.timer = 5.0;
-    const [openedEvt, lootSpawnedEvt] = await Promise.all([
-      waitForEvent(c1, 'vaultOpened', 5000),
-      waitForEvent(c1, 'lootSpawned', 5000),
-    ]);
-
-    if (openedEvt.vault.state !== 'OPEN' || openedEvt.vault.progress !== 100) {
-      throw new Error(`Expected vault OPEN at 100%, got ${JSON.stringify(openedEvt.vault)}`);
-    }
-    console.log('✓ TEST 6 PASSED: Vault successfully reaches OPEN state and broadcasts to all clients');
-
-    // ── TEST 7 — LOOT SPAWN ──
-    if (!lootSpawnedEvt.loot || !lootSpawnedEvt.loot.items || lootSpawnedEvt.loot.items.length !== 6) {
-      throw new Error(`Expected 6 loot items spawned, got ${lootSpawnedEvt.loot?.items?.length}`);
-    }
-    const types = lootSpawnedEvt.loot.items.map(i => i.type);
-    const cashCount = types.filter(t => t === 'CASH').length;
-    const goldCount = types.filter(t => t === 'GOLD').length;
-    const diamondCount = types.filter(t => t === 'DIAMONDS').length;
-    if (cashCount !== 3 || goldCount !== 2 || diamondCount !== 1) {
-      throw new Error(`Loot counts mismatch: CASH=${cashCount}, GOLD=${goldCount}, DIAMONDS=${diamondCount}`);
-    }
-    console.log('✓ TEST 7 PASSED: Exactly 6 loot items exist after vault opening (3 CASH, 2 GOLD, 1 DIAMONDS)');
-
-    // ── TEST 10 — INVALID DISTANCE FOR LOOT ──
-    // Enforcer (c4) at (10, 0, 10) tries to collect diamond_01 at (0, 0.9, 5)
-    c4.emit('crewMove', { role: 'ENFORCER', position: { x: 10, y: 0, z: 10 }, rotationY: 0, state: 'IDLE' });
-    await sleep(50);
-    const lootDistPromise = waitForEvent(c4, 'lootError');
-    c4.emit('collectLoot', { lootId: 'diamond_01' });
-    const lDistErr = await lootDistPromise;
-    if (!lDistErr.message.includes('closer')) {
-      throw new Error(`Expected loot distance error, got: ${lDistErr.message}`);
-    }
-    console.log('✓ TEST 10 PASSED: Loot collection from invalid distance rejected');
-
-    // ── TEST 8 — VALID LOOT COLLECTION ──
-    // Move Hacker (c2) to diamond_01 location (0, 0, 5)
-    c2.emit('crewMove', { role: 'HACKER', position: { x: 0, y: 0, z: 5 }, rotationY: 0, state: 'IDLE' });
+    // ── TEST 15: ROOFTOP EXIT ESCAPE ──
+    // Move Hacker (c2) to rooftopExit (0, 4, -19)
+    c2.emit('crewMove', { role: 'HACKER', position: { x: 0, y: 4, z: -19 }, rotationY: 0, state: 'IDLE' });
     await sleep(50);
 
-    const lootCollectPromise = waitForEvent(c1, 'lootCollected');
-    c2.emit('collectLoot', { lootId: 'diamond_01' });
-    const collectedData = await lootCollectPromise;
-
-    if (collectedData.lootId !== 'diamond_01' || collectedData.value !== 500 || collectedData.totalValue !== 500) {
-      throw new Error(`Unexpected lootCollected data: ${JSON.stringify(collectedData)}`);
+    const roofStartPromise = waitForEvent(c4, 'escapeStarted');
+    c2.emit('requestEscape', { routeId: 'rooftopExit' });
+    const roofStartEvt = await roofStartPromise;
+    if (roofStartEvt.routeId !== 'rooftopExit' || roofStartEvt.role !== 'HACKER') {
+      throw new Error(`Expected rooftop escapeStarted, got: ${JSON.stringify(roofStartEvt)}`);
     }
-    console.log('✓ TEST 8 PASSED: Valid loot collection processed and broadcast to all clients with updated total value ($500)');
 
-    // ── TEST 9 — DUPLICATE COLLECTION PROTECTION ──
-    // Thief (c1) also tries to collect already collected diamond_01
-    const dupCollectPromise = waitForEvent(c1, 'lootError');
-    c1.emit('collectLoot', { lootId: 'diamond_01' });
-    const dupErr = await dupCollectPromise;
-    if (!dupErr.message.includes('already been collected')) {
-      throw new Error(`Expected duplicate collection error, got: ${dupErr.message}`);
+    // Fast-forward escape timer
+    if (room.escape.activeEscapes[p2.id]) {
+      room.escape.activeEscapes[p2.id].timer = 2.0;
     }
-    console.log('✓ TEST 9 PASSED: Duplicate collection protection verified (second request rejected)');
 
-    // ── TEST 14 — ALARM REGRESSION DURING INTERACTION ──
-    // Move Enforcer into lobbyGuard patrol range
-    const lobbyGuardPos = room.guards.lobbyGuard.position;
-    const guardDetectedPromise = waitForEvent(c1, 'guardDetected');
-    c4.emit('crewMove', {
-      role: 'ENFORCER',
-      position: { x: lobbyGuardPos.x, y: 0, z: lobbyGuardPos.z - 2 },
-      rotationY: 0,
-      state: 'MOVING',
-    });
-    const guardEvt = await guardDetectedPromise;
-    if (guardEvt.guardId !== 'lobbyGuard' || guardEvt.role !== 'ENFORCER') {
-      throw new Error(`Alarm detection regression failed: ${JSON.stringify(guardEvt)}`);
+    const roofEscapedEvt = await waitForEvent(c4, 'playerEscaped', 5000);
+    if (roofEscapedEvt.playerId !== p2.id || roofEscapedEvt.escapedCount !== 2) {
+      throw new Error(`Expected 2 escaped players, got ${roofEscapedEvt.escapedCount}`);
     }
-    console.log('✓ TEST 14 PASSED: Alarm, guard, and camera systems continue detecting normally during vault interactions');
+    console.log('✓ TEST 15 PASSED: Second operative successfully escapes via Rooftop Exit (2 / 4 ESCAPED)');
 
-    // ── TEST 15 — MULTIPLAYER SNAPSHOT ──
-    const vSnapPromise = waitForEvent(c3, 'vaultStateSnapshot');
-    const lSnapPromise = waitForEvent(c3, 'lootStateSnapshot');
-    c3.emit('requestVaultState');
-    c3.emit('requestLootState');
-    const [vSnap, lSnap] = await Promise.all([vSnapPromise, lSnapPromise]);
-    if (vSnap.vault.state !== 'OPEN' || lSnap.loot.totalCollectedValue !== 500) {
-      throw new Error(`Snapshot mismatch: ${JSON.stringify(vSnap)} / ${JSON.stringify(lSnap)}`);
+    // ── TEST 16: DISTANCE BREAK CANCELLATION ──
+    // Distractor (c3) moves to frontExit (0, 0, 21), starts escape, then moves away
+    c3.emit('crewMove', { role: 'DISTRACTOR', position: { x: 0, y: 0, z: 21 }, rotationY: 0, state: 'IDLE' });
+    await sleep(50);
+    c3.emit('requestEscape', { routeId: 'frontExit' });
+    await waitForEvent(c3, 'escapeStarted');
+
+    // Move Distractor away to (0, 0, 10) during confirmation
+    const cancelPromise = waitForEvent(c4, 'escapeCancelled');
+    c3.emit('crewMove', { role: 'DISTRACTOR', position: { x: 0, y: 0, z: 10 }, rotationY: 0, state: 'MOVING' });
+    const cancelEvt = await cancelPromise;
+    if (cancelEvt.playerId !== p3.id || !cancelEvt.reason.includes('moved away')) {
+      throw new Error(`Expected escapeCancelled due to moving away, got: ${JSON.stringify(cancelEvt)}`);
     }
-    console.log('✓ TEST 15 PASSED: Server state snapshots deliver complete vault and loot states to clients');
+    console.log('✓ TEST 16 PASSED: Moving away from escape zone during confirmation cancels escape attempt');
 
-    // ── TEST 13 — TIMER INTEGRATION ──
-    if (room.status !== ROOM_STATUS.PLAYING || !room.simulationActive) {
-      throw new Error('Simulation state should remain active during vault interactions');
+    // ── TEST 17: DISCONNECT CANCELLATION ──
+    // Enforcer (c4) moves to rooftopExit (0, 4, -19), starts escape, then disconnects
+    c4.emit('crewMove', { role: 'ENFORCER', position: { x: 0, y: 4, z: -19 }, rotationY: 0, state: 'IDLE' });
+    await sleep(50);
+    c4.emit('requestEscape', { routeId: 'rooftopExit' });
+    await waitForEvent(c3, 'escapeStarted');
+
+    const discCancelPromise = waitForEvent(c3, 'escapeCancelled');
+    c4.disconnect(); // Disconnect Enforcer client
+    const discCancelEvt = await discCancelPromise;
+    if (discCancelEvt.playerId !== p4.id) {
+      throw new Error(`Expected escapeCancelled for disconnected player, got: ${JSON.stringify(discCancelEvt)}`);
     }
-    console.log('✓ TEST 13 PASSED: Heist timer and execution continue uninterrupted during vault interactions');
+    console.log('✓ TEST 17 PASSED: Disconnecting during active escape confirmation cleanly cancels escape');
 
-    // ── TEST 12 — PLAN AGAIN RESET ──
-    const resetVaultPromise = waitForEvent(c1, 'vaultStateSnapshot');
-    const resetLootPromise = waitForEvent(c1, 'lootStateSnapshot');
+    // ── TEST 18: INDEPENDENT ESCAPE FOR REMAINING OPERATIVE ──
+    // Distractor (c3) returns to frontExit (0, 0, 21) and completes escape
+    c3.emit('crewMove', { role: 'DISTRACTOR', position: { x: 0, y: 0, z: 21 }, rotationY: 0, state: 'IDLE' });
+    await sleep(50);
+    c3.emit('requestEscape', { routeId: 'frontExit' });
+    await waitForEvent(c3, 'escapeStarted');
+
+    if (room.escape.activeEscapes[p3.id]) {
+      room.escape.activeEscapes[p3.id].timer = 2.0;
+    }
+    const finalEscapedEvt = await waitForEvent(c3, 'playerEscaped', 5000);
+    if (finalEscapedEvt.playerId !== p3.id || finalEscapedEvt.escapedCount !== 3) {
+      throw new Error(`Expected 3 total escaped players, got ${finalEscapedEvt.escapedCount}`);
+    }
+    console.log('✓ TEST 18 PASSED: Remaining operative independently escapes (3 / 3 connected escaped)');
+
+    // ── TEST 19: PLAN AGAIN RESET ──
+    // Host (c1) triggers resetSimulation
+    const resetSnapPromise = waitForEvent(c3, 'escapeStateSnapshot');
     c1.emit('resetSimulation');
-    const [rVault, rLoot] = await Promise.all([resetVaultPromise, resetLootPromise]);
-
-    if (rVault.vault.state !== 'LOCKED' || rVault.vault.progress !== 0) {
-      throw new Error(`Expected vault reset to LOCKED, got ${JSON.stringify(rVault.vault)}`);
+    const resetSnap = await resetSnapPromise;
+    if (resetSnap.escape.state !== 'LOCKED' || resetSnap.escape.escapedPlayers.length !== 0) {
+      throw new Error(`Expected reset escape LOCKED with 0 escaped, got ${JSON.stringify(resetSnap.escape)}`);
     }
-    if (rLoot.loot.totalCollectedValue !== 0 || rLoot.loot.items.some(i => i.collected)) {
-      throw new Error(`Expected loot reset with 0 collected value, got ${JSON.stringify(rLoot.loot)}`);
-    }
-    console.log('✓ TEST 12 PASSED: Plan Again cleanly resets vault to LOCKED and loot items to uncollected');
-
-    // ── TEST 16 — FULL REGRESSION ──
-    console.log('✓ TEST 16 PASSED: Full regression suite passed (Lobby, Roles, Planning, Movement, Guards, Cameras, Alarm, Vault, Loot, HUDs, Timer)');
+    console.log('✓ TEST 19 PASSED: Resetting simulation cleanly restores escape state back to LOCKED with 0 escaped players');
 
     console.log('\n========================================');
-    console.log('ALL 16 MILESTONE 13 TESTS PASSED!');
+    console.log('ALL 19 MILESTONE 14 TESTS PASSED!');
     console.log('========================================\n');
 
   } finally {

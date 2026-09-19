@@ -21,11 +21,13 @@ import { Guards } from '../entities/Guards.js';
 import { SecurityCameras } from '../entities/SecurityCameras.js';
 import { VaultSystem } from '../systems/VaultSystem.js';
 import { LootSystem } from '../systems/LootSystem.js';
+import { EscapeSystem } from '../systems/EscapeSystem.js';
 import { PlannerUI } from '../ui/PlannerUI.js';
 import { TimerHUD } from '../ui/TimerHUD.js';
 import { AlarmHUD } from '../ui/AlarmHUD.js';
 import { VaultHUD } from '../ui/VaultHUD.js';
 import { LootHUD } from '../ui/LootHUD.js';
+import { EscapeHUD } from '../ui/EscapeHUD.js';
 import { MultiplayerGameState } from '../multiplayer/MultiplayerGameState.js';
 import {
   CAMERA_FOV,
@@ -60,6 +62,7 @@ export class Game {
     this._initCameras();
     this._initVault();
     this._initLoot();
+    this._initEscape();
     this._initMovement();
     this._initActions();
     this._initTimer();
@@ -69,6 +72,7 @@ export class Game {
     this._initAlarmHUD();
     this._initVaultHUD();
     this._initLootHUD();
+    this._initEscapeHUD();
     this._initInput();
     this._initMultiplayerState();
 
@@ -104,12 +108,29 @@ export class Game {
     this.lootSystem.addToScene(this.scene);
   }
 
+  _initEscape() {
+    this.escapeSystem = new EscapeSystem({
+      onEscapeChange: (data) => {
+        if (this.escapeHUD) {
+          const localId = this.playerContext ? this.playerContext.localPlayerId : null;
+          const totalPlayers = (this.playerContext && this.playerContext.players) ? this.playerContext.players.length : 4;
+          this.escapeHUD.update(data, localId, totalPlayers);
+        }
+      },
+    });
+    this.escapeSystem.addToScene(this.scene);
+  }
+
   _initVaultHUD() {
     this.vaultHUD = new VaultHUD();
   }
 
   _initLootHUD() {
     this.lootHUD = new LootHUD();
+  }
+
+  _initEscapeHUD() {
+    this.escapeHUD = new EscapeHUD();
   }
 
   _initInput() {
@@ -151,8 +172,27 @@ export class Game {
 
     if (!localMember) return;
     const pos = localMember.group.position;
+    const isLocalEscaped = this.escapeSystem && this.escapeSystem.escapedPlayers && this.playerContext && this.escapeSystem.escapedPlayers.includes(this.playerContext.localPlayerId);
 
-    // 1. Check if near uncollected loot inside open vault
+    // 1. Check if inside escape zone and can escape
+    if (this.escapeSystem && !isLocalEscaped) {
+      const escCheck = this.escapeSystem.checkProximity(pos, isLocalEscaped, this.playerContext ? this.playerContext.localPlayerId : null);
+      if (escCheck.inZone && escCheck.canEscape) {
+        console.log(`[HEIST] Interaction [E]: Escaping via ${escCheck.routeName} (${escCheck.routeId})`);
+        if (this.multiplayerClient && this.multiplayerClient.state.isConnected) {
+          this.multiplayerClient.requestEscape(escCheck.routeId);
+        } else {
+          this.escapeSystem.setEscapeState({
+            state: this.escapeSystem.state,
+            escapedPlayers: [this.playerContext ? this.playerContext.localPlayerId : 'local'],
+            activeEscapes: {},
+          });
+        }
+        return;
+      }
+    }
+
+    // 2. Check if near uncollected loot inside open vault
     if (this.vaultSystem && this.vaultSystem.state === 'OPEN') {
       const closestLoot = this.lootSystem.getClosestCollectable(pos, 2.0);
       if (closestLoot) {
@@ -166,7 +206,7 @@ export class Game {
       }
     }
 
-    // 2. Check if near vault entrance and can open
+    // 3. Check if near vault entrance and can open
     if (this.vaultSystem) {
       const check = this.vaultSystem.checkInteraction(localRole, pos);
       if (check.canOpen) {
@@ -276,6 +316,77 @@ export class Game {
       this.multiplayerClient.on('lootStateSnapshot', (data) => {
         if (data.loot && data.loot.items) {
           this.lootSystem.initLootItems(data.loot.items, data.loot.totalCollectedValue || 0);
+        }
+      });
+
+      // ─── Escape System Multiplayer Listeners (Milestone 14)
+      this.multiplayerClient.on('escapeAvailable', (data) => {
+        if (data.escape) {
+          this.escapeSystem.setEscapeState(data.escape);
+          if (this.escapeHUD) {
+            const localId = this.playerContext ? this.playerContext.localPlayerId : null;
+            const totalPlayers = (this.playerContext && this.playerContext.players) ? this.playerContext.players.length : 4;
+            this.escapeHUD.update(data.escape, localId, totalPlayers);
+          }
+        }
+      });
+
+      this.multiplayerClient.on('escapeStarted', (data) => {
+        if (data.escape) {
+          this.escapeSystem.setEscapeState(data.escape);
+          if (this.escapeHUD) {
+            const localId = this.playerContext ? this.playerContext.localPlayerId : null;
+            const totalPlayers = (this.playerContext && this.playerContext.players) ? this.playerContext.players.length : 4;
+            this.escapeHUD.update(data.escape, localId, totalPlayers);
+          }
+        }
+      });
+
+      this.multiplayerClient.on('playerEscaped', (data) => {
+        if (data.escape) {
+          this.escapeSystem.setEscapeState(data.escape);
+          if (this.escapeHUD) {
+            const localId = this.playerContext ? this.playerContext.localPlayerId : null;
+            const totalPlayers = (this.playerContext && this.playerContext.players) ? this.playerContext.players.length : 4;
+            this.escapeHUD.update(data.escape, localId, totalPlayers);
+          }
+        }
+      });
+
+      this.multiplayerClient.on('escapeCancelled', (data) => {
+        if (data.escape) {
+          this.escapeSystem.setEscapeState(data.escape);
+          if (this.escapeHUD) {
+            const localId = this.playerContext ? this.playerContext.localPlayerId : null;
+            const totalPlayers = (this.playerContext && this.playerContext.players) ? this.playerContext.players.length : 4;
+            this.escapeHUD.update(data.escape, localId, totalPlayers);
+          }
+        }
+      });
+
+      this.multiplayerClient.on('escapeProgress', (data) => {
+        if (this.escapeSystem && this.escapeSystem.activeEscapes && this.escapeSystem.activeEscapes[data.playerId]) {
+          this.escapeSystem.activeEscapes[data.playerId].progress = data.progress;
+          if (this.escapeHUD) {
+            const localId = this.playerContext ? this.playerContext.localPlayerId : null;
+            const totalPlayers = (this.playerContext && this.playerContext.players) ? this.playerContext.players.length : 4;
+            this.escapeHUD.update({
+              state: this.escapeSystem.state,
+              escapedPlayers: this.escapeSystem.escapedPlayers,
+              activeEscapes: this.escapeSystem.activeEscapes,
+            }, localId, totalPlayers);
+          }
+        }
+      });
+
+      this.multiplayerClient.on('escapeStateSnapshot', (data) => {
+        if (data.escape) {
+          this.escapeSystem.setEscapeState(data.escape);
+          if (this.escapeHUD) {
+            const localId = this.playerContext ? this.playerContext.localPlayerId : null;
+            const totalPlayers = (this.playerContext && this.playerContext.players) ? this.playerContext.players.length : 4;
+            this.escapeHUD.update(data.escape, localId, totalPlayers);
+          }
         }
       });
     }
@@ -512,15 +623,18 @@ export class Game {
     // Reset Alarm
     this.alarmSystem.reset();
 
-    // Reset Vault & Loot
+    // Reset Vault, Loot & Escape
     if (this.vaultSystem) this.vaultSystem.reset();
     if (this.lootSystem) this.lootSystem.reset();
+    if (this.escapeSystem) {
+      this.escapeSystem.setEscapeState({ state: 'LOCKED', escapedPlayers: [], activeEscapes: {} });
+    }
 
     if (this.multiplayerClient && this.multiplayerClient.state.isConnected) {
       this.multiplayerClient.resetSimulation();
     }
 
-    // Show planner UI, update timer HUD to 60, hide Alarm HUD, Vault HUD, Loot HUD
+    // Show planner UI, update timer HUD to 60, hide Alarm HUD, Vault HUD, Loot HUD, Escape HUD
     this.plannerUI.show();
     this.plannerUI.hideStatus();
     this.timerHUD.update(this.timer.remaining);
@@ -533,6 +647,9 @@ export class Game {
     }
     if (this.lootHUD) {
       this.lootHUD.hide();
+    }
+    if (this.escapeHUD) {
+      this.escapeHUD.hide();
     }
   }
 
@@ -558,7 +675,7 @@ export class Game {
       this.alarmHUD.show();
     }
 
-    // Show Vault HUD & Loot HUD
+    // Show Vault HUD, Loot HUD & Escape HUD
     if (this.vaultHUD) {
       this.vaultHUD.update(this.vaultSystem.state, this.vaultSystem.progress);
       this.vaultHUD.show();
@@ -566,6 +683,16 @@ export class Game {
     if (this.lootHUD) {
       this.lootHUD.update(this.lootSystem.getStats());
       this.lootHUD.show();
+    }
+    if (this.escapeHUD) {
+      const localId = this.playerContext ? this.playerContext.localPlayerId : null;
+      const totalPlayers = (this.playerContext && this.playerContext.players) ? this.playerContext.players.length : 4;
+      this.escapeHUD.update({
+        state: this.escapeSystem ? this.escapeSystem.state : 'LOCKED',
+        escapedPlayers: this.escapeSystem ? this.escapeSystem.escapedPlayers : [],
+        activeEscapes: this.escapeSystem ? this.escapeSystem.activeEscapes : {},
+      }, localId, totalPlayers);
+      this.escapeHUD.show();
     }
 
     // Begin executing all action queues
@@ -623,12 +750,15 @@ export class Game {
     // Update orbit controls damping
     this.controls.update();
 
-    // Update vault & loot visual animations
+    // Update vault, loot & escape visual animations
     if (this.vaultSystem) {
       this.vaultSystem.update(delta);
     }
     if (this.lootSystem) {
       this.lootSystem.update(delta);
+    }
+    if (this.escapeSystem) {
+      this.escapeSystem.update(delta);
     }
 
     // Update timer & systems
@@ -711,15 +841,25 @@ export class Game {
     const pos = localMember.group.position;
     let prompt = null;
 
-    // Proximity to loot if vault open
-    if (this.vaultSystem && this.vaultSystem.state === 'OPEN') {
+    const isLocalEscaped = this.escapeSystem && this.escapeSystem.escapedPlayers && this.playerContext && this.escapeSystem.escapedPlayers.includes(this.playerContext.localPlayerId);
+
+    // 1. Proximity to Escape zone
+    if (this.escapeSystem && !isLocalEscaped) {
+      const escCheck = this.escapeSystem.checkProximity(pos, isLocalEscaped, this.playerContext ? this.playerContext.localPlayerId : null);
+      if (escCheck.inZone) {
+        prompt = escCheck.promptText;
+      }
+    }
+
+    // 2. Proximity to loot if vault open
+    if (!prompt && this.vaultSystem && this.vaultSystem.state === 'OPEN') {
       const closestLoot = this.lootSystem.getClosestCollectable(pos, 2.0);
       if (closestLoot) {
         prompt = `[E] COLLECT ${closestLoot.type} ($${closestLoot.value})`;
       }
     }
 
-    // Proximity to vault if not near loot
+    // 3. Proximity to vault if not near escape/loot
     if (!prompt && this.vaultSystem) {
       const vCheck = this.vaultSystem.checkInteraction(localRole, pos);
       if (vCheck.isNear) {
