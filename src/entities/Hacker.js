@@ -15,11 +15,11 @@ export class Hacker extends CrewMember {
       position,
 
       colors: {
-        skin:      0xc49e6c,
-        primary:   0x181830,   // dark navy
-        secondary: 0x151528,
-        accent:    0x3388ff,   // electric blue
-        shoe:      0x101018,
+        skin:      0x20140e,   // rich dark tone
+        primary:   0x0e1016,   // sleek stealth black
+        secondary: 0x08090d,   // deep black
+        accent:    0x38bdf8,   // electric sky blue
+        shoe:      0x050508,
       },
 
       body: {

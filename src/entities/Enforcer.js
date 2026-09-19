@@ -15,11 +15,11 @@ export class Enforcer extends CrewMember {
       position,
 
       colors: {
-        skin:      0xba936a,
-        primary:   0x3a1a1a,   // dark maroon
-        secondary: 0x301515,
-        accent:    0xcc3333,   // strong red
-        shoe:      0x151010,
+        skin:      0x1e120c,   // rich dark tone
+        primary:   0x141012,   // sleek stealth black
+        secondary: 0x0c080a,   // deep black
+        accent:    0xef4444,   // vibrant crimson red armor
+        shoe:      0x050508,
       },
 
       // Bulky build

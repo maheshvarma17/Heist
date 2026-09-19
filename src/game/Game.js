@@ -456,13 +456,13 @@ export class Game {
 
   /* ── Lighting ──────────────────────────────────── */
   _initLighting() {
-    // Soft ambient fill
-    const ambient = new THREE.AmbientLight(COLORS.ambientLight, 0.4);
+    // Soft clean ambient fill
+    const ambient = new THREE.AmbientLight(COLORS.ambientLight, 0.65);
     this.scene.add(ambient);
 
-    // Key light — directional with shadows (covers the full bank)
-    const dirLight = new THREE.DirectionalLight(COLORS.directionalLight, 0.8);
-    dirLight.position.set(10, 25, 15);
+    // Key light — directional with soft crisp shadows
+    const dirLight = new THREE.DirectionalLight(COLORS.directionalLight, 0.85);
+    dirLight.position.set(12, 28, 16);
     dirLight.castShadow = true;
     dirLight.shadow.mapSize.set(2048, 2048);
     dirLight.shadow.camera.near = 1;
@@ -472,10 +472,11 @@ export class Game {
     dirLight.shadow.camera.right  =  d;
     dirLight.shadow.camera.top    =  d;
     dirLight.shadow.camera.bottom = -d;
+    dirLight.shadow.bias = -0.0005;
     this.scene.add(dirLight);
 
-    // Subtle hemisphere for sky/ground bounce
-    const hemiLight = new THREE.HemisphereLight(0x8899bb, 0x222244, 0.25);
+    // Crisp hemisphere light for sky/ground bounce
+    const hemiLight = new THREE.HemisphereLight(0xffffff, 0xcfd8dc, 0.45);
     this.scene.add(hemiLight);
   }
 

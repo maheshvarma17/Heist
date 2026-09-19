@@ -31,15 +31,15 @@ const B = {
 
 // ─── Guard Colors ───────────────────────────────────────────
 const COL = {
-  uniform:    0x1a2a4a,   // dark navy
-  shirt:      0x2a3a5a,   // lighter navy
-  skin:       0xd4a574,
-  capTop:     0x1a2240,
-  capBand:    0xd4a030,   // gold band
-  badge:      0xddb040,   // shiny gold
-  shoe:       0x111111,
-  eye:        0x101010,
-  radio:      0x222222,
+  uniform:    0x111118,   // sleek black security uniform
+  shirt:      0x181822,   // dark tactical shirt
+  skin:       0x20140e,   // rich dark tone
+  capTop:     0x0e0e14,
+  capBand:    0xf59e0b,   // gold band
+  badge:      0xfbbf24,   // shiny gold badge
+  shoe:       0x050508,
+  eye:        0x080808,
+  radio:      0x141414,
   cone:       0x44ff44,   // default detection cone (green)
 };
 

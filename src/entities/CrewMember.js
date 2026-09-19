@@ -76,22 +76,22 @@ export class CrewMember {
 
     this._mats = {
       skin: new THREE.MeshStandardMaterial({
-        color: c.skin ?? 0xd4a574, roughness: 0.7, metalness: 0.05,
+        color: c.skin ?? 0x1f140e, roughness: 0.7, metalness: 0.05,
       }),
       primary: new THREE.MeshStandardMaterial({
-        color: c.primary, roughness: 0.72, metalness: 0.08,
+        color: c.primary ?? 0x111116, roughness: 0.75, metalness: 0.12,
       }),
       secondary: new THREE.MeshStandardMaterial({
-        color: c.secondary ?? c.primary, roughness: 0.72, metalness: 0.08,
+        color: c.secondary ?? 0x09090c, roughness: 0.75, metalness: 0.12,
       }),
       accent: new THREE.MeshStandardMaterial({
         color: c.accent, roughness: 0.55, metalness: 0.18,
       }),
       shoe: new THREE.MeshStandardMaterial({
-        color: c.shoe ?? 0x111111, roughness: 0.8, metalness: 0.1,
+        color: c.shoe ?? 0x06060a, roughness: 0.8, metalness: 0.1,
       }),
       eye: new THREE.MeshStandardMaterial({
-        color: 0x101010, roughness: 0.3, metalness: 0.1,
+        color: 0x080808, roughness: 0.3, metalness: 0.1,
       }),
     };
   }

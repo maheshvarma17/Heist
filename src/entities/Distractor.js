@@ -15,11 +15,11 @@ export class Distractor extends CrewMember {
       position,
 
       colors: {
-        skin:      0xc8a882,
-        primary:   0x2a3a28,   // olive green
-        secondary: 0x263020,
-        accent:    0xffaa33,   // warm orange
-        shoe:      0x1a1510,
+        skin:      0x241812,   // rich dark tone
+        primary:   0x121214,   // sleek stealth black
+        secondary: 0x0a0a0c,   // deep black
+        accent:    0xf59e0b,   // vibrant amber cap & scarf
+        shoe:      0x050508,
       },
 
       body: {

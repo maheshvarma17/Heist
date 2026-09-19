@@ -37,43 +37,43 @@ const DH = 3.2;     // door-opening height
 const ROOFTOP_Y = 4;
 const PARAPET_H = 1.2;
 
-// ─── Color Palette ──────────────────────────────────────────
+// ─── Color Palette (Clean Modern Architectural Light Palette) ───
 const PAL = Object.freeze({
   // Floors
-  lobbyFloor:   0x3d3428,
-  vaultFloor:   0x14142a,
-  secFloor:     0x1a1518,
-  officeFloor:  0x2a2418,
-  hallFloor:    0x1e1e2c,
-  roofFloor:    0x2a2a2a,
-  ground:       0x08080e,
+  lobbyFloor:   0xe2dcd2,
+  vaultFloor:   0x334155,
+  secFloor:     0xd5dbe1,
+  officeFloor:  0xdfe4ea,
+  hallFloor:    0xe2e8f0,
+  roofFloor:    0x94a3b8,
+  ground:       0xf1f5f9,
 
   // Walls
-  lobbyWall:    0x4a4035,
-  vaultWall:    0x1e1e38,
-  secWall:      0x251822,
-  officeWall:   0x3a3025,
-  hallWall:     0x262436,
-  roofWall:     0x333333,
+  lobbyWall:    0xf8fafc,
+  vaultWall:    0x475569,
+  secWall:      0xe2e8f0,
+  officeWall:   0xf8fafc,
+  hallWall:     0xf8fafc,
+  roofWall:     0x64748b,
 
   // Ceilings
-  ceiling:      0x131318,
+  ceiling:      0xf8fafc,
 
   // Props
-  vaultDoor:    0x556070,
-  desk:         0x3a2a1a,
-  counter:      0x4a3a2a,
-  chair:        0x222228,
-  computer:     0x1a1a1e,
-  screen:       0x1155cc,
-  shelf:        0x3a3530,
-  serverRack:   0x111114,
-  gold:         0xdaa520,
-  safe:         0x3a3a4a,
-  plant:        0x1a3a1a,
-  plantPot:     0x5a3a2a,
-  railing:      0x555566,
-  doorFrame:    0x444450,
+  vaultDoor:    0x475569,
+  desk:         0x334155,
+  counter:      0x475569,
+  chair:        0x1e293b,
+  computer:     0x0f172a,
+  screen:       0x0284c7,
+  shelf:        0x64748b,
+  serverRack:   0x1e293b,
+  gold:         0xf59e0b,
+  safe:         0x475569,
+  plant:        0x10b981,
+  plantPot:     0x94a3b8,
+  railing:      0x64748b,
+  doorFrame:    0x94a3b8,
 });
 
 // ═══════════════════════════════════════════════════════════

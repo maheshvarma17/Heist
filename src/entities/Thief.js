@@ -15,11 +15,11 @@ export class Thief extends CrewMember {
       position,
 
       colors: {
-        skin:      0xd4a574,
-        primary:   0x1a1a22,   // dark near-black
-        secondary: 0x151520,
-        accent:    0x00ccaa,   // teal
-        shoe:      0x0a0a10,
+        skin:      0x221610,   // rich dark tone
+        primary:   0x0e0e12,   // sleek stealth black
+        secondary: 0x08080b,   // deep black
+        accent:    0x10b981,   // vibrant emerald visor
+        shoe:      0x050508,
       },
 
       // Slim build
