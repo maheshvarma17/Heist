@@ -14,6 +14,8 @@ import { MovementSystem } from '../systems/MovementSystem.js';
 import { ActionQueue } from '../systems/ActionQueue.js';
 import { ActionSystem } from '../systems/ActionSystem.js';
 import { HeistTimer } from '../systems/HeistTimer.js';
+import { GuardSystem } from '../systems/GuardSystem.js';
+import { Guards } from '../entities/Guards.js';
 import { PlannerUI } from '../ui/PlannerUI.js';
 import { TimerHUD } from '../ui/TimerHUD.js';
 import {
@@ -41,6 +43,7 @@ export class Game {
     this._initLighting();
     this._initBank();
     this._initCrew();
+    this._initGuards();
     this._initMovement();
     this._initActions();
     this._initTimer();
@@ -135,6 +138,21 @@ export class Game {
     this.crew.addToScene(this.scene);
   }
 
+  /* ── Guards ───────────────────────────────────── */
+  _initGuards() {
+    this.guards = new Guards();
+    this.guards.addToScene(this.scene);
+
+    this.guardSystem = new GuardSystem(
+      this.guards,
+      (guard, member) => {
+        // Detection callback — used by future alarm system
+        console.log(`[HEIST] Detection event: ${guard.name} spotted ${member.name}`);
+      },
+    );
+    this.guardSystem.setCrewMembers(this.crew.members);
+  }
+
   /* ── Movement System ───────────────────────────── */
   _initMovement() {
     this.movement = new MovementSystem();
@@ -191,6 +209,9 @@ export class Game {
     // Reset characters to the lobby spawn positions
     this.crew.resetPositions();
 
+    // Reset guards to patrol start
+    this.guardSystem.reset();
+
     // Show planner UI, update timer HUD to 60
     this.plannerUI.show();
     this.plannerUI.hideStatus();
@@ -207,6 +228,9 @@ export class Game {
 
     // Start the 60-second countdown
     this.timer.start();
+
+    // Reset guard system for a fresh run, then it auto-updates
+    this.guardSystem.reset();
 
     // Begin executing all action queues
     this.actions.execute(() => this._onExecutionComplete());
@@ -265,6 +289,7 @@ export class Game {
     if (this.state.phase === PHASES.EXECUTING) {
       this.timer.update(delta);
       this.timerHUD.update(this.timer.remaining);
+      this.guardSystem.update(delta);
     }
 
     // Update systems
