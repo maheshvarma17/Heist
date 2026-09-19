@@ -19,9 +19,13 @@ import { CameraSystem } from '../systems/CameraSystem.js';
 import { AlarmSystem } from '../systems/AlarmSystem.js';
 import { Guards } from '../entities/Guards.js';
 import { SecurityCameras } from '../entities/SecurityCameras.js';
+import { VaultSystem } from '../systems/VaultSystem.js';
+import { LootSystem } from '../systems/LootSystem.js';
 import { PlannerUI } from '../ui/PlannerUI.js';
 import { TimerHUD } from '../ui/TimerHUD.js';
 import { AlarmHUD } from '../ui/AlarmHUD.js';
+import { VaultHUD } from '../ui/VaultHUD.js';
+import { LootHUD } from '../ui/LootHUD.js';
 import { MultiplayerGameState } from '../multiplayer/MultiplayerGameState.js';
 import {
   CAMERA_FOV,
@@ -54,6 +58,8 @@ export class Game {
     this._initCrew();
     this._initGuards();
     this._initCameras();
+    this._initVault();
+    this._initLoot();
     this._initMovement();
     this._initActions();
     this._initTimer();
@@ -61,6 +67,9 @@ export class Game {
     this._initPlannerUI();
     this._initTimerHUD();
     this._initAlarmHUD();
+    this._initVaultHUD();
+    this._initLootHUD();
+    this._initInput();
     this._initMultiplayerState();
 
     if (options.autoStartPlanner !== false) {
@@ -70,6 +79,105 @@ export class Game {
 
     window.addEventListener('resize', () => this._onResize());
     this._onResize(); // set initial size
+  }
+
+  _initVault() {
+    this.vaultSystem = new VaultSystem({
+      vaultDoorGroup: this.bank.vaultDoorGroup,
+      vaultWheelMesh: this.bank.vaultWheelMesh,
+      onStateChange: (v) => {
+        if (this.vaultHUD) {
+          this.vaultHUD.update(v.state, v.progress);
+        }
+      },
+    });
+  }
+
+  _initLoot() {
+    this.lootSystem = new LootSystem({
+      onLootChange: (stats) => {
+        if (this.lootHUD) {
+          this.lootHUD.update(stats);
+        }
+      },
+    });
+    this.lootSystem.addToScene(this.scene);
+  }
+
+  _initVaultHUD() {
+    this.vaultHUD = new VaultHUD();
+  }
+
+  _initLootHUD() {
+    this.lootHUD = new LootHUD();
+  }
+
+  _initInput() {
+    window.addEventListener('keydown', (e) => {
+      if (e.code === 'KeyE' && this.state.phase === PHASES.EXECUTING) {
+        this._handleInteraction();
+      }
+    });
+  }
+
+  _handleInteraction() {
+    // Find active local member or any near crew in single player
+    let localMember = null;
+    let localRole = null;
+
+    if (this.playerContext && this.playerContext.localPlayerRole) {
+      localRole = this.playerContext.localPlayerRole.toUpperCase();
+      localMember = this.crew.getByRole(localRole.toLowerCase());
+    } else {
+      // Single player fallback: find closest crew member to vault or loot
+      for (const m of this.crew.members) {
+        if (this.lootSystem && this.lootSystem.getClosestCollectable(m.group.position, 2.0)) {
+          localMember = m;
+          localRole = m.role.toUpperCase();
+          break;
+        }
+        const vCheck = this.vaultSystem ? this.vaultSystem.checkInteraction(m.role, m.group.position) : null;
+        if (vCheck && (vCheck.canOpen || vCheck.isNear)) {
+          localMember = m;
+          localRole = m.role.toUpperCase();
+          break;
+        }
+      }
+      if (!localMember && this.crew.members.length > 0) {
+        localMember = this.crew.members[0];
+        localRole = localMember.role.toUpperCase();
+      }
+    }
+
+    if (!localMember) return;
+    const pos = localMember.group.position;
+
+    // 1. Check if near uncollected loot inside open vault
+    if (this.vaultSystem && this.vaultSystem.state === 'OPEN') {
+      const closestLoot = this.lootSystem.getClosestCollectable(pos, 2.0);
+      if (closestLoot) {
+        console.log(`[HEIST] Interaction [E]: Collecting ${closestLoot.type} (${closestLoot.id})`);
+        if (this.multiplayerClient && this.multiplayerClient.state.isConnected) {
+          this.multiplayerClient.collectLoot(closestLoot.id);
+        } else {
+          this.lootSystem.collectLoot(closestLoot.id, { playerName: 'Local Player', collectedBy: 'local' });
+        }
+        return;
+      }
+    }
+
+    // 2. Check if near vault entrance and can open
+    if (this.vaultSystem) {
+      const check = this.vaultSystem.checkInteraction(localRole, pos);
+      if (check.canOpen) {
+        console.log(`[HEIST] Interaction [E]: Opening Vault with role ${localRole}`);
+        if (this.multiplayerClient && this.multiplayerClient.state.isConnected) {
+          this.multiplayerClient.requestVaultOpen();
+        } else {
+          this.vaultSystem.setState('OPENING', 0, 'Local Player', localRole);
+        }
+      }
+    }
   }
 
   _initAlarm() {
@@ -121,6 +229,54 @@ export class Game {
       this.multiplayerClient.on('cameraDetected', (data) => {
         this.alarmSystem.recordDetection(data);
         this.alarmHUD.showDetectionNotification(`CAMERA DETECTED ${data.role || 'CREW'}`, 'camera');
+      });
+
+      // ─── Vault & Loot Multiplayer Listeners (Milestone 13) ─
+      this.multiplayerClient.on('vaultOpeningStarted', (data) => {
+        const v = data.vault || {};
+        this.vaultSystem.setState(v.state || 'OPENING', v.progress || 0, data.openedBy, data.role);
+        this.vaultHUD.update('OPENING', v.progress || 0);
+      });
+
+      this.multiplayerClient.on('vaultStateUpdated', (data) => {
+        this.vaultSystem.setState(data.state, data.progress, data.openedBy, data.openedByRole);
+        this.vaultHUD.update(data.state, data.progress);
+      });
+
+      this.multiplayerClient.on('vaultOpened', (data) => {
+        this.vaultSystem.setState('OPEN', 100, data.openedBy, data.openedByRole);
+        this.vaultHUD.update('OPEN', 100);
+        if (data.loot && data.loot.items) {
+          this.lootSystem.initLootItems(data.loot.items, data.loot.totalCollectedValue || 0);
+        }
+      });
+
+      this.multiplayerClient.on('vaultOpeningCancelled', (data) => {
+        this.vaultSystem.setState('LOCKED', 0);
+        this.vaultHUD.update('LOCKED', 0);
+      });
+
+      this.multiplayerClient.on('vaultStateSnapshot', (data) => {
+        if (data.vault) {
+          this.vaultSystem.setState(data.vault.state, data.vault.progress, data.vault.openedBy, data.vault.openedByRole);
+          this.vaultHUD.update(data.vault.state, data.vault.progress);
+        }
+      });
+
+      this.multiplayerClient.on('lootSpawned', (data) => {
+        if (data.loot && data.loot.items) {
+          this.lootSystem.initLootItems(data.loot.items, data.loot.totalCollectedValue || 0);
+        }
+      });
+
+      this.multiplayerClient.on('lootCollected', (data) => {
+        this.lootSystem.collectLoot(data.lootId, data);
+      });
+
+      this.multiplayerClient.on('lootStateSnapshot', (data) => {
+        if (data.loot && data.loot.items) {
+          this.lootSystem.initLootItems(data.loot.items, data.loot.totalCollectedValue || 0);
+        }
       });
     }
   }
@@ -356,17 +512,27 @@ export class Game {
     // Reset Alarm
     this.alarmSystem.reset();
 
+    // Reset Vault & Loot
+    if (this.vaultSystem) this.vaultSystem.reset();
+    if (this.lootSystem) this.lootSystem.reset();
+
     if (this.multiplayerClient && this.multiplayerClient.state.isConnected) {
       this.multiplayerClient.resetSimulation();
     }
 
-    // Show planner UI, update timer HUD to 60, hide Alarm HUD
+    // Show planner UI, update timer HUD to 60, hide Alarm HUD, Vault HUD, Loot HUD
     this.plannerUI.show();
     this.plannerUI.hideStatus();
     this.timerHUD.update(this.timer.remaining);
     this.timerHUD.show();
     if (this.alarmHUD) {
       this.alarmHUD.hide();
+    }
+    if (this.vaultHUD) {
+      this.vaultHUD.hide();
+    }
+    if (this.lootHUD) {
+      this.lootHUD.hide();
     }
   }
 
@@ -392,6 +558,16 @@ export class Game {
       this.alarmHUD.show();
     }
 
+    // Show Vault HUD & Loot HUD
+    if (this.vaultHUD) {
+      this.vaultHUD.update(this.vaultSystem.state, this.vaultSystem.progress);
+      this.vaultHUD.show();
+    }
+    if (this.lootHUD) {
+      this.lootHUD.update(this.lootSystem.getStats());
+      this.lootHUD.show();
+    }
+
     // Begin executing all action queues
     this.actions.execute(() => this._onExecutionComplete());
   }
@@ -404,6 +580,7 @@ export class Game {
     this.state.phase = PHASES.RESULT;
     this.timer.stop();
 
+    if (this.vaultHUD) this.vaultHUD.setPrompt(null);
     this.plannerUI.hideStatus();
     this.plannerUI.showComplete({
       type: 'success',
@@ -418,6 +595,7 @@ export class Game {
     // Stop all character movement and action execution
     this.actions.abort();
 
+    if (this.vaultHUD) this.vaultHUD.setPrompt(null);
     this.plannerUI.hideStatus();
     this.plannerUI.showComplete({ type: 'timeout' });
   }
@@ -445,6 +623,14 @@ export class Game {
     // Update orbit controls damping
     this.controls.update();
 
+    // Update vault & loot visual animations
+    if (this.vaultSystem) {
+      this.vaultSystem.update(delta);
+    }
+    if (this.lootSystem) {
+      this.lootSystem.update(delta);
+    }
+
     // Update timer & systems
     if (this.state.phase === PHASES.EXECUTING) {
       this.timer.update(delta);
@@ -455,6 +641,16 @@ export class Game {
       if (!isMultiplayerActive) {
         this.guardSystem.update(delta);
         this.cameraSystem.update(delta);
+
+        // Single-player vault opening progression
+        if (this.vaultSystem && this.vaultSystem.state === 'OPENING') {
+          const newProgress = Math.min(100, this.vaultSystem.progress + (delta / 5.0) * 100);
+          if (newProgress >= 100) {
+            this.vaultSystem.setState('OPEN', 100);
+          } else {
+            this.vaultSystem.setState('OPENING', Math.round(newProgress));
+          }
+        }
       } else {
         // In multiplayer, cameras still oscillate scan visually while server determines detection
         for (const cam of this.securityCameras.members) {
@@ -463,6 +659,11 @@ export class Game {
           cam.pivot.rotation.y = cam.baseYaw + Math.sin(cam._phase) * cam.scanAmplitude;
         }
       }
+
+      // Check proximity for interaction prompts
+      this._updateInteractionPrompts();
+    } else {
+      if (this.vaultHUD) this.vaultHUD.setPrompt(null);
     }
 
     // Update movement & actions
@@ -475,5 +676,57 @@ export class Game {
     }
 
     this.renderer.render(this.scene, this.camera);
+  }
+
+  _updateInteractionPrompts() {
+    if (!this.vaultHUD) return;
+
+    let localMember = null;
+    let localRole = null;
+
+    if (this.playerContext && this.playerContext.localPlayerRole) {
+      localRole = this.playerContext.localPlayerRole.toUpperCase();
+      localMember = this.crew.getByRole(localRole.toLowerCase());
+    } else {
+      for (const m of this.crew.members) {
+        if (this.lootSystem && this.lootSystem.getClosestCollectable(m.group.position, 2.0)) {
+          localMember = m;
+          localRole = m.role.toUpperCase();
+          break;
+        }
+        const vCheck = this.vaultSystem ? this.vaultSystem.checkInteraction(m.role, m.group.position) : null;
+        if (vCheck && (vCheck.canOpen || vCheck.isNear)) {
+          localMember = m;
+          localRole = m.role.toUpperCase();
+          break;
+        }
+      }
+    }
+
+    if (!localMember) {
+      this.vaultHUD.setPrompt(null);
+      return;
+    }
+
+    const pos = localMember.group.position;
+    let prompt = null;
+
+    // Proximity to loot if vault open
+    if (this.vaultSystem && this.vaultSystem.state === 'OPEN') {
+      const closestLoot = this.lootSystem.getClosestCollectable(pos, 2.0);
+      if (closestLoot) {
+        prompt = `[E] COLLECT ${closestLoot.type} ($${closestLoot.value})`;
+      }
+    }
+
+    // Proximity to vault if not near loot
+    if (!prompt && this.vaultSystem) {
+      const vCheck = this.vaultSystem.checkInteraction(localRole, pos);
+      if (vCheck.isNear) {
+        prompt = vCheck.promptText;
+      }
+    }
+
+    this.vaultHUD.setPrompt(prompt);
   }
 }

@@ -125,6 +125,22 @@ export const ALARM_THRESHOLDS = {
   MAXIMUM: 100,
 };
 
+export const VAULT_CONFIG = {
+  position: { x: 0, y: 0, z: 10 },
+  interactionRadius: 3.0,
+  openDuration: 5.0, // 5 seconds
+  allowedRoles: ['THIEF', 'HACKER'],
+};
+
+export const LOOT_CONFIGS = [
+  { id: 'cash_01', type: 'CASH', value: 100, position: { x: -3.5, y: 0.3, z: 3.5 } },
+  { id: 'cash_02', type: 'CASH', value: 100, position: { x: -3.5, y: 0.3, z: 7.0 } },
+  { id: 'cash_03', type: 'CASH', value: 100, position: { x: 0, y: 0.3, z: 8.0 } },
+  { id: 'gold_01', type: 'GOLD', value: 250, position: { x: 3.5, y: 0.3, z: 3.5 } },
+  { id: 'gold_02', type: 'GOLD', value: 250, position: { x: 3.5, y: 0.3, z: 7.0 } },
+  { id: 'diamond_01', type: 'DIAMONDS', value: 500, position: { x: 0, y: 0.9, z: 5.0 } },
+];
+
 export class RoomManager {
   constructor() {
     /** @type {Map<string, Object>} roomCode -> room */
@@ -441,6 +457,8 @@ export class RoomManager {
       guards: this.getGuardSnapshot(room.code),
       cameras: this.getCameraSnapshot(room.code),
       alarm: this.getAlarmSnapshot(room.code),
+      vault: this.getVaultSnapshot(room.code),
+      loot: this.getLootSnapshot(room.code),
     };
   }
 
@@ -639,6 +657,8 @@ export class RoomManager {
       guards: this.getGuardSnapshot(room.code),
       cameras: this.getCameraSnapshot(room.code),
       alarm: this.getAlarmSnapshot(room.code),
+      vault: this.getVaultSnapshot(room.code),
+      loot: this.getLootSnapshot(room.code),
     };
   }
 
@@ -784,6 +804,34 @@ export class RoomManager {
       cameras: { lobbyCam: null, hallwayCam: null, vaultCam: null, securityCam: null },
     };
 
+    room.vault = {
+      state: 'LOCKED',
+      progress: 0,
+      openedBy: null,
+      openerPlayerId: null,
+      openedByRole: null,
+      timer: 0,
+      openDuration: VAULT_CONFIG.openDuration,
+    };
+
+    room.loot = {
+      items: {},
+      totalCollectedValue: 0,
+    };
+
+    for (const item of LOOT_CONFIGS) {
+      room.loot.items[item.id] = {
+        id: item.id,
+        type: item.type,
+        value: item.value,
+        position: { ...item.position },
+        collected: false,
+        collectedBy: null,
+        collectedByName: null,
+        collectedByRole: null,
+      };
+    }
+
     room.simulationActive = false;
   }
 
@@ -801,6 +849,8 @@ export class RoomManager {
       alarm: room.alarm,
       guards: this.getGuardSnapshot(roomCode),
       cameras: this.getCameraSnapshot(roomCode),
+      vault: this.getVaultSnapshot(roomCode),
+      loot: this.getLootSnapshot(roomCode),
     };
   }
 
@@ -1168,12 +1218,227 @@ export class RoomManager {
       room.alarm.lastDecayTime = Date.now(); // reset decay timer during active detection
     }
 
+    // ── 4. Vault Opening Progress & Cancellation ─────────────
+    let vaultEvent = null;
+    let vaultOpenedEvent = null;
+    let vaultCancelledEvent = null;
+
+    if (room.vault && room.vault.state === 'OPENING') {
+      const openerState = room.crewStates[room.vault.openerPlayerId];
+      let cancelReason = null;
+
+      if (!openerState || !openerState.connected) {
+        cancelReason = 'Operative disconnected.';
+      } else if (openerState.position) {
+        const dx = openerState.position.x - VAULT_CONFIG.position.x;
+        const dz = openerState.position.z - VAULT_CONFIG.position.z;
+        const dist = Math.sqrt(dx * dx + dz * dz);
+        if (dist > VAULT_CONFIG.interactionRadius + 0.8) {
+          cancelReason = 'Operative moved away from the vault.';
+        }
+      }
+
+      if (cancelReason) {
+        room.vault.state = 'LOCKED';
+        room.vault.progress = 0;
+        room.vault.timer = 0;
+        room.vault.openedBy = null;
+        room.vault.openerPlayerId = null;
+        room.vault.openedByRole = null;
+
+        vaultCancelledEvent = {
+          roomCode: room.code,
+          reason: cancelReason,
+          vault: this.getVaultSnapshot(room.code),
+        };
+      } else {
+        room.vault.timer += dt;
+        const prevProgress = room.vault.progress;
+        room.vault.progress = Math.min(100, Math.round((room.vault.timer / room.vault.openDuration) * 100));
+
+        if (room.vault.timer >= room.vault.openDuration) {
+          room.vault.state = 'OPEN';
+          room.vault.progress = 100;
+          vaultOpenedEvent = {
+            roomCode: room.code,
+            openedBy: room.vault.openedBy,
+            openedByRole: room.vault.openedByRole,
+            vault: this.getVaultSnapshot(room.code),
+            loot: this.getLootSnapshot(room.code),
+          };
+        } else if (room.vault.progress !== prevProgress) {
+          vaultEvent = {
+            roomCode: room.code,
+            state: 'OPENING',
+            progress: room.vault.progress,
+            openedBy: room.vault.openedBy,
+            openedByRole: room.vault.openedByRole,
+          };
+        }
+      }
+    }
+
     return {
       guardUpdates,
       guardEvents,
       cameraEvents,
       cameraStateEvents,
       alarmEvent,
+      vaultEvent,
+      vaultOpenedEvent,
+      vaultCancelledEvent,
+    };
+  }
+
+  /**
+   * Request to begin opening the vault.
+   * @param {string} roomCode
+   * @param {string} socketId
+   * @returns {{ success: boolean, vault?: Object, player?: Object, error?: string }}
+   */
+  requestVaultOpen(roomCode, socketId) {
+    const room = this.getRoom(roomCode);
+    if (!room) return { success: false, error: 'Room not found.' };
+    if (room.status !== ROOM_STATUS.PLAYING) return { success: false, error: 'The heist is not currently running.' };
+
+    const player = room.players.find(p => p.socketId === socketId);
+    if (!player || !player.connected) return { success: false, error: 'Player not connected or authorized in this room.' };
+
+    if (!VAULT_CONFIG.allowedRoles.includes(player.role)) {
+      return { success: false, error: 'Only the Thief or Hacker can open the vault.' };
+    }
+
+    if (!room.vault) {
+      this.initRoomSimulationState(room);
+    }
+
+    if (room.vault.state === 'OPEN') {
+      return { success: false, error: 'The vault is already open.' };
+    }
+
+    if (room.vault.state === 'OPENING') {
+      return { success: false, error: 'The vault is already being opened.' };
+    }
+
+    const crewState = room.crewStates[player.id];
+    if (!crewState || !crewState.position) {
+      return { success: false, error: 'Crew position not found.' };
+    }
+
+    const dx = crewState.position.x - VAULT_CONFIG.position.x;
+    const dz = crewState.position.z - VAULT_CONFIG.position.z;
+    const dist = Math.sqrt(dx * dx + dz * dz);
+
+    if (dist > VAULT_CONFIG.interactionRadius) {
+      return { success: false, error: 'Move closer to the vault.' };
+    }
+
+    room.vault.state = 'OPENING';
+    room.vault.progress = 0;
+    room.vault.timer = 0;
+    room.vault.openedBy = player.name;
+    room.vault.openerPlayerId = player.id;
+    room.vault.openedByRole = player.role;
+
+    return {
+      success: true,
+      vault: this.getVaultSnapshot(roomCode),
+      player: { id: player.id, name: player.name, role: player.role },
+    };
+  }
+
+  /**
+   * Cancel ongoing vault opening.
+   * @param {string} roomCode
+   * @param {string} [socketId]
+   * @param {string} [reason]
+   * @returns {{ success: boolean, vault?: Object, reason?: string }}
+   */
+  cancelVaultOpen(roomCode, socketId = null, reason = 'Cancelled') {
+    const room = this.getRoom(roomCode);
+    if (!room || !room.vault) return { success: false, error: 'Room or vault not found.' };
+
+    if (room.vault.state === 'OPENING') {
+      room.vault.state = 'LOCKED';
+      room.vault.progress = 0;
+      room.vault.timer = 0;
+      room.vault.openedBy = null;
+      room.vault.openerPlayerId = null;
+      room.vault.openedByRole = null;
+
+      return {
+        success: true,
+        reason,
+        vault: this.getVaultSnapshot(roomCode),
+      };
+    }
+
+    return { success: false, error: 'Vault is not currently opening.' };
+  }
+
+  /**
+   * Attempt to collect a loot item inside the vault.
+   * @param {string} roomCode
+   * @param {string} socketId
+   * @param {string} lootId
+   * @returns {{ success: boolean, item?: Object, loot?: Object, player?: Object, error?: string }}
+   */
+  collectLoot(roomCode, socketId, lootId) {
+    const room = this.getRoom(roomCode);
+    if (!room) return { success: false, error: 'Room not found.' };
+    if (room.status !== ROOM_STATUS.PLAYING) return { success: false, error: 'The heist is not currently running.' };
+
+    const player = room.players.find(p => p.socketId === socketId);
+    if (!player || !player.connected) return { success: false, error: 'Player not connected or authorized in this room.' };
+
+    if (!room.vault || room.vault.state !== 'OPEN') {
+      return { success: false, error: 'The vault must be open before collecting loot.' };
+    }
+
+    if (!room.loot || !room.loot.items[lootId]) {
+      return { success: false, error: 'Loot item does not exist.' };
+    }
+
+    const item = room.loot.items[lootId];
+    if (item.collected) {
+      return { success: false, error: 'Loot has already been collected.' };
+    }
+
+    const crewState = room.crewStates[player.id];
+    if (!crewState || !crewState.position) {
+      return { success: false, error: 'Crew position not found.' };
+    }
+
+    const dx = crewState.position.x - item.position.x;
+    const dz = crewState.position.z - item.position.z;
+    const dist = Math.sqrt(dx * dx + dz * dz);
+
+    const COLLECTION_RADIUS = 2.0;
+    if (dist > COLLECTION_RADIUS) {
+      return { success: false, error: 'Move closer to collect this loot.' };
+    }
+
+    // Authoritatively claim loot
+    item.collected = true;
+    item.collectedBy = player.id;
+    item.collectedByName = player.name;
+    item.collectedByRole = player.role;
+    room.loot.totalCollectedValue += item.value;
+
+    const remainingCount = Object.values(room.loot.items).filter(i => !i.collected).length;
+
+    return {
+      success: true,
+      item: { ...item },
+      lootId: item.id,
+      type: item.type,
+      value: item.value,
+      collectedBy: player.id,
+      playerName: player.name,
+      role: player.role,
+      totalValue: room.loot.totalCollectedValue,
+      remainingCount,
+      loot: this.getLootSnapshot(roomCode),
     };
   }
 
@@ -1224,6 +1489,46 @@ export class RoomManager {
   }
 
   /**
+   * Get current vault state object for room.
+   * @param {string} roomCode
+   * @returns {Object}
+   */
+  getVaultSnapshot(roomCode) {
+    const room = this.getRoom(roomCode);
+    if (!room || !room.vault) {
+      return {
+        state: 'LOCKED',
+        progress: 0,
+        openedBy: null,
+        openerPlayerId: null,
+        openedByRole: null,
+        timer: 0,
+        openDuration: VAULT_CONFIG.openDuration,
+      };
+    }
+    return { ...room.vault };
+  }
+
+  /**
+   * Get current loot state object for room.
+   * @param {string} roomCode
+   * @returns {Object}
+   */
+  getLootSnapshot(roomCode) {
+    const room = this.getRoom(roomCode);
+    if (!room || !room.loot) {
+      return {
+        items: LOOT_CONFIGS.map(item => ({ ...item, collected: false, collectedBy: null, collectedByName: null, collectedByRole: null })),
+        totalCollectedValue: 0,
+      };
+    }
+    return {
+      items: Object.values(room.loot.items).map(item => ({ ...item })),
+      totalCollectedValue: room.loot.totalCollectedValue,
+    };
+  }
+
+  /**
    * Delete room by code.
    * @param {string} roomCode
    */
@@ -1254,6 +1559,8 @@ export class RoomManager {
       teamPlan: room.teamPlan,
       planningReady: room.planningReady,
       alarm: room.alarm ? { level: room.alarm.level, state: room.alarm.state } : { level: 0, state: 'NORMAL' },
+      vault: this.getVaultSnapshot(room.code),
+      loot: this.getLootSnapshot(room.code),
     };
   }
 }

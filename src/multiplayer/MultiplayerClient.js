@@ -154,6 +154,50 @@ export class MultiplayerClient {
       this._emitLocal('alarmStateSnapshot', data);
     });
 
+    // ─── Vault & Loot Events (Milestone 13) ───────────────
+
+    this.socket.on('vaultOpeningStarted', (data) => {
+      this._emitLocal('vaultOpeningStarted', data);
+    });
+
+    this.socket.on('vaultStateUpdated', (data) => {
+      this._emitLocal('vaultStateUpdated', data);
+    });
+
+    this.socket.on('vaultOpened', (data) => {
+      this._emitLocal('vaultOpened', data);
+    });
+
+    this.socket.on('vaultOpeningCancelled', (data) => {
+      this._emitLocal('vaultOpeningCancelled', data);
+    });
+
+    this.socket.on('vaultStateSnapshot', (data) => {
+      this._emitLocal('vaultStateSnapshot', data);
+    });
+
+    this.socket.on('vaultError', (data) => {
+      this.state.lastError = data.message;
+      this._emitLocal('vaultError', data);
+    });
+
+    this.socket.on('lootSpawned', (data) => {
+      this._emitLocal('lootSpawned', data);
+    });
+
+    this.socket.on('lootCollected', (data) => {
+      this._emitLocal('lootCollected', data);
+    });
+
+    this.socket.on('lootStateSnapshot', (data) => {
+      this._emitLocal('lootStateSnapshot', data);
+    });
+
+    this.socket.on('lootError', (data) => {
+      this.state.lastError = data.message;
+      this._emitLocal('lootError', data);
+    });
+
     this.socket.on('planningError', (data) => {
       this._emitLocal('planningError', data);
     });
@@ -285,6 +329,38 @@ export class MultiplayerClient {
   requestAlarmState() {
     if (this.socket && this.socket.connected) {
       this.socket.emit('requestAlarmState');
+    }
+  }
+
+  // ─── Vault & Loot Requests (Milestone 13) ───────────────
+
+  requestVaultOpen() {
+    if (this.socket && this.socket.connected) {
+      this.socket.emit('requestVaultOpen');
+    }
+  }
+
+  cancelVaultOpen() {
+    if (this.socket && this.socket.connected) {
+      this.socket.emit('cancelVaultOpen');
+    }
+  }
+
+  requestVaultState() {
+    if (this.socket && this.socket.connected) {
+      this.socket.emit('requestVaultState');
+    }
+  }
+
+  requestLootState() {
+    if (this.socket && this.socket.connected) {
+      this.socket.emit('requestLootState');
+    }
+  }
+
+  collectLoot(lootId) {
+    if (this.socket && this.socket.connected) {
+      this.socket.emit('collectLoot', { lootId });
     }
   }
 

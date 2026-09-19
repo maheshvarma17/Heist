@@ -244,3 +244,209 @@ html, body {
   transform: translateX(-50%) translateY(0);
   pointer-events: auto;
 }
+
+/* ═══════════════════════════════════════════════════════════
+   VAULT HUD, LOOT HUD & INTERACTION PROMPTS (Milestone 13)
+   ═══════════════════════════════════════════════════════════ */
+
+/* ── Vault HUD ──────────────────────────────────────────── */
+.vault-hud {
+  position: fixed;
+  top: 96px;
+  left: 24px;
+  width: 170px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-md);
+  padding: 12px 16px;
+  z-index: 100;
+  pointer-events: none;
+  transition: opacity var(--transition-normal), transform var(--transition-normal);
+  font-family: var(--font-family-base);
+}
+
+.vault-hud.hidden {
+  opacity: 0;
+  transform: translateY(-10px);
+  pointer-events: none;
+}
+
+.vault-hud-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: var(--color-text-secondary);
+  text-transform: uppercase;
+  margin-bottom: 6px;
+}
+
+.vault-hud-status {
+  font-size: 1.125rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  color: var(--color-text);
+}
+
+.vault-locked .vault-hud-status {
+  color: var(--color-text-secondary);
+}
+
+.vault-opening .vault-hud-status {
+  color: var(--color-warning);
+}
+
+.vault-open .vault-hud-status {
+  color: var(--color-success);
+}
+
+.vault-progress-bar {
+  margin-top: 8px;
+  width: 100%;
+  height: 6px;
+  background: var(--color-surface-secondary);
+  border-radius: var(--radius-full);
+  overflow: hidden;
+  border: 1px solid var(--color-border);
+}
+
+.vault-progress-bar.hidden {
+  display: none;
+}
+
+.vault-progress-fill {
+  height: 100%;
+  background: var(--color-warning);
+  border-radius: var(--radius-full);
+  transition: width 0.1s linear;
+}
+
+/* ── Loot HUD ───────────────────────────────────────────── */
+.loot-hud {
+  position: fixed;
+  top: 140px;
+  right: 24px;
+  width: 190px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-md);
+  padding: 14px 16px;
+  z-index: 100;
+  pointer-events: none;
+  transition: opacity var(--transition-normal), transform var(--transition-normal);
+  font-family: var(--font-family-base);
+}
+
+.loot-hud.hidden {
+  opacity: 0;
+  transform: translateY(-10px);
+  pointer-events: none;
+}
+
+.loot-hud-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: var(--color-text-secondary);
+  text-transform: uppercase;
+  margin-bottom: 10px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.loot-breakdown {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+.loot-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 0.8125rem;
+}
+
+.loot-type {
+  font-weight: 600;
+  color: var(--color-text-secondary);
+}
+
+.loot-count {
+  font-family: var(--font-family-mono);
+  font-weight: 700;
+  color: var(--color-text);
+  background: var(--color-surface-secondary);
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-border);
+}
+
+.loot-value-box {
+  background: var(--color-surface-secondary);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: 8px 10px;
+  text-align: center;
+}
+
+.loot-value-label {
+  font-size: 0.6875rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  margin-bottom: 2px;
+}
+
+.loot-value-amount {
+  font-size: 1.25rem;
+  font-weight: 800;
+  color: var(--color-success);
+  font-family: var(--font-family-mono);
+}
+
+/* ── Central Interaction Prompt ─────────────────────────── */
+.interaction-prompt {
+  position: fixed;
+  bottom: 80px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: #ffffff;
+  color: var(--color-text);
+  border: 2px solid var(--color-accent);
+  padding: 10px 24px;
+  border-radius: var(--radius-full);
+  box-shadow: var(--shadow-xl);
+  font-family: var(--font-family-base);
+  font-weight: 700;
+  font-size: 0.9375rem;
+  letter-spacing: 0.03em;
+  z-index: 500;
+  pointer-events: none;
+  transition: opacity var(--transition-fast), transform var(--transition-fast);
+  animation: promptPulse 1.8s infinite ease-in-out;
+}
+
+.interaction-prompt.hidden {
+  display: none;
+}
+
+@keyframes promptPulse {
+  0%, 100% {
+    transform: translateX(-50%) scale(1);
+    box-shadow: 0 4px 12px rgba(2, 132, 199, 0.25);
+  }
+  50% {
+    transform: translateX(-50%) scale(1.04);
+    box-shadow: 0 8px 20px rgba(2, 132, 199, 0.4);
+  }
+}

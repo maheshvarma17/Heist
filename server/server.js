@@ -221,6 +221,8 @@ io.on('connection', (socket) => {
       guards: res.guards,
       cameras: res.cameras,
       alarm: res.alarm,
+      vault: res.vault,
+      loot: res.loot,
     });
   });
 
@@ -346,6 +348,8 @@ io.on('connection', (socket) => {
       guards: res.guards,
       cameras: res.cameras,
       alarm: res.alarm,
+      vault: res.vault,
+      loot: res.loot,
     });
 
     io.to(res.roomCode).emit('guardStateSnapshot', {
@@ -361,6 +365,16 @@ io.on('connection', (socket) => {
     io.to(res.roomCode).emit('alarmStateSnapshot', {
       roomCode: res.roomCode,
       alarm: res.alarm,
+    });
+
+    io.to(res.roomCode).emit('vaultStateSnapshot', {
+      roomCode: res.roomCode,
+      vault: res.vault,
+    });
+
+    io.to(res.roomCode).emit('lootStateSnapshot', {
+      roomCode: res.roomCode,
+      loot: res.loot,
     });
   });
 
@@ -401,6 +415,110 @@ io.on('connection', (socket) => {
     });
   });
 
+  // ═══════════════════════════════════════════════════════════
+  // VAULT & LOOT EVENTS (Milestone 13)
+  // ═══════════════════════════════════════════════════════════
+
+  /**
+   * Handle: requestVaultOpen
+   */
+  socket.on('requestVaultOpen', () => {
+    if (!player.roomCode) return socket.emit('vaultError', { message: 'You are not in a room.' });
+
+    const res = roomManager.requestVaultOpen(player.roomCode, socket.id);
+    if (!res.success) {
+      return socket.emit('vaultError', { message: res.error || 'Failed to open vault.' });
+    }
+
+    console.log(`[Multiplayer] Vault opening started by ${player.name} (${player.role}) in room ${player.roomCode}`);
+    io.to(player.roomCode).emit('vaultOpeningStarted', {
+      roomCode: player.roomCode,
+      openedBy: player.name,
+      role: player.role,
+      playerName: player.name,
+      vault: res.vault,
+    });
+    io.to(player.roomCode).emit('vaultStateUpdated', {
+      roomCode: player.roomCode,
+      state: res.vault.state,
+      progress: res.vault.progress,
+      openedBy: res.vault.openedBy,
+      openedByRole: res.vault.openedByRole,
+    });
+  });
+
+  /**
+   * Handle: cancelVaultOpen
+   */
+  socket.on('cancelVaultOpen', () => {
+    if (!player.roomCode) return socket.emit('vaultError', { message: 'You are not in a room.' });
+
+    const res = roomManager.cancelVaultOpen(player.roomCode, socket.id, 'Cancelled by player');
+    if (res.success) {
+      io.to(player.roomCode).emit('vaultOpeningCancelled', {
+        roomCode: player.roomCode,
+        reason: res.reason,
+        vault: res.vault,
+      });
+      io.to(player.roomCode).emit('vaultStateUpdated', {
+        roomCode: player.roomCode,
+        state: res.vault.state,
+        progress: res.vault.progress,
+        openedBy: null,
+        openedByRole: null,
+      });
+    }
+  });
+
+  /**
+   * Handle: requestVaultState
+   */
+  socket.on('requestVaultState', () => {
+    if (!player.roomCode) return socket.emit('vaultError', { message: 'You are not in a room.' });
+    socket.emit('vaultStateSnapshot', {
+      roomCode: player.roomCode,
+      vault: roomManager.getVaultSnapshot(player.roomCode),
+    });
+  });
+
+  /**
+   * Handle: requestLootState
+   */
+  socket.on('requestLootState', () => {
+    if (!player.roomCode) return socket.emit('lootError', { message: 'You are not in a room.' });
+    socket.emit('lootStateSnapshot', {
+      roomCode: player.roomCode,
+      loot: roomManager.getLootSnapshot(player.roomCode),
+    });
+  });
+
+  /**
+   * Handle: collectLoot
+   * Payload: { lootId: string }
+   */
+  socket.on('collectLoot', ({ lootId } = {}) => {
+    if (!player.roomCode) return socket.emit('lootError', { message: 'You are not in a room.' });
+
+    const res = roomManager.collectLoot(player.roomCode, socket.id, lootId);
+    if (!res.success) {
+      return socket.emit('lootError', { message: res.error || 'Failed to collect loot.' });
+    }
+
+    console.log(`[Multiplayer] Loot ${res.lootId} (${res.type}) collected by ${player.name} in room ${player.roomCode}`);
+    io.to(player.roomCode).emit('lootCollected', {
+      roomCode: player.roomCode,
+      lootId: res.lootId,
+      type: res.type,
+      value: res.value,
+      collectedBy: res.collectedBy,
+      playerName: res.playerName,
+      role: res.role,
+      totalValue: res.totalValue,
+      remainingCount: res.remainingCount,
+      loot: res.loot,
+    });
+  });
+
   /**
    * Handle: resetSimulation (Plan Again)
    */
@@ -420,6 +538,14 @@ io.on('connection', (socket) => {
       io.to(player.roomCode).emit('cameraStateSnapshot', {
         roomCode: player.roomCode,
         cameras: res.cameras,
+      });
+      io.to(player.roomCode).emit('vaultStateSnapshot', {
+        roomCode: player.roomCode,
+        vault: res.vault,
+      });
+      io.to(player.roomCode).emit('lootStateSnapshot', {
+        roomCode: player.roomCode,
+        loot: res.loot,
       });
     }
   });
@@ -540,6 +666,34 @@ setInterval(() => {
 
       if (sim.alarmEvent) {
         io.to(code).emit('alarmUpdated', sim.alarmEvent);
+      }
+
+      if (sim.vaultCancelledEvent) {
+        io.to(code).emit('vaultOpeningCancelled', sim.vaultCancelledEvent);
+        io.to(code).emit('vaultStateUpdated', {
+          roomCode: code,
+          state: sim.vaultCancelledEvent.vault.state,
+          progress: sim.vaultCancelledEvent.vault.progress,
+          openedBy: null,
+          openedByRole: null,
+        });
+      }
+
+      if (sim.vaultOpenedEvent) {
+        io.to(code).emit('vaultOpened', sim.vaultOpenedEvent);
+        io.to(code).emit('vaultStateUpdated', {
+          roomCode: code,
+          state: 'OPEN',
+          progress: 100,
+          openedBy: sim.vaultOpenedEvent.openedBy,
+          openedByRole: sim.vaultOpenedEvent.openedByRole,
+        });
+        io.to(code).emit('lootSpawned', {
+          roomCode: code,
+          loot: sim.vaultOpenedEvent.loot,
+        });
+      } else if (sim.vaultEvent) {
+        io.to(code).emit('vaultStateUpdated', sim.vaultEvent);
       }
     }
   }

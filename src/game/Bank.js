@@ -187,6 +187,8 @@ export class Bank {
     this.rooms        = {};
     this.doors        = [];
     this.vault        = null;
+    this.vaultDoorGroup = null;
+    this.vaultWheelMesh = null;
     this.securityRoom = null;
     this.escapeRoutes = [];
 
@@ -358,26 +360,33 @@ export class Bank {
     ], m.vaultWall);
 
     // ── Vault door (iconic circular door near south entry) ──
-    // Thick metallic disc flush with the south opening
+    const doorGroup = new THREE.Group();
+    doorGroup.name = 'VaultDoor';
+    doorGroup.position.set(2.0, 1.6, 10.0);
+
     const doorGeo = new THREE.CylinderGeometry(1.5, 1.5, 0.4, 32);
     const doorMesh = new THREE.Mesh(doorGeo, m.vaultDoor);
     doorMesh.rotation.x = Math.PI / 2;
-    doorMesh.position.set(2.5, 1.6, 9.5);  // swung open to the right
+    doorMesh.position.set(-2.0, 0, 0);
     doorMesh.castShadow = true;
-    g.add(doorMesh);
+    doorGroup.add(doorMesh);
 
     // Door handle (small cylinder)
     const handleGeo = new THREE.CylinderGeometry(0.08, 0.08, 0.6, 8);
     const handleMesh = new THREE.Mesh(handleGeo, m.vaultDoor);
-    handleMesh.position.set(2.5, 1.6, 9.28);
-    g.add(handleMesh);
+    handleMesh.position.set(-2.0, 0, 0.28);
+    doorGroup.add(handleMesh);
 
     // Vault wheel (torus on the door)
     const wheelGeo = new THREE.TorusGeometry(0.5, 0.06, 8, 24);
     const wheelMesh = new THREE.Mesh(wheelGeo, m.doorFrame);
     wheelMesh.rotation.x = Math.PI / 2;
-    wheelMesh.position.set(2.5, 1.6, 9.28);
-    g.add(wheelMesh);
+    wheelMesh.position.set(-2.0, 0, 0.28);
+    doorGroup.add(wheelMesh);
+
+    g.add(doorGroup);
+    this.vaultDoorGroup = doorGroup;
+    this.vaultWheelMesh = wheelMesh;
 
     // ── Furniture ──
     // Safety-deposit shelving along north wall

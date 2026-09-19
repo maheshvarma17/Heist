@@ -151,9 +151,48 @@ NODE + EXPRESS + SOCKET.IO SERVER (server/server.js)
 
 ---
 
-## Current Multiplayer Scope & Limitations (Milestone 12)
+## Vault System & Multiplayer Loot System (Milestone 13)
 
-- **Synchronized in Milestone 12**:
+```
+TEAM PLANS ➔ HEIST STARTS ➔ REACH VAULT ➔ OPEN VAULT (5s) ➔ LOOT AVAILABLE ➔ COLLECT LOOT
+```
+
+### Authoritative Vault System
+* **Vault States**:
+  * `LOCKED`: Initial state at start of heist or on reset.
+  * `OPENING`: Active opening sequence lasting approximately **5.0 seconds** with continuous progress tracking (0% to 100%).
+  * `OPEN`: Vault door swung open 90°; enables 3D loot items inside the vault for collection.
+* **Authorized Roles**: Only the **THIEF** or **HACKER** can initiate vault opening.
+* **Proximity & Cancellation**: The operative must remain within **3.0 world units** of the vault entrance (`(0, 0, 10)`). Moving away or disconnecting automatically cancels opening and resets the vault to `LOCKED`.
+* **Visuals**: Procedural circular vault door with rotating locking wheel during opening and smooth hinge pivot swinging open upon completion.
+
+### Authoritative Loot System
+* **Loot Types & Values**:
+  * **CASH** (3 items): **$100** each (procedural bill stacks with band)
+  * **GOLD** (2 items): **$250** each (procedural shiny metallic gold bars)
+  * **DIAMONDS** (1 item): **$500** (procedural faceted crystal gemstone)
+  * **Total Heist Vault Value**: **$1,500** across 6 distinct items.
+* **Collection Rules**:
+  * Available only when `vault.state === 'OPEN'`.
+  * Accessible to **all 4 crew members**.
+  * Operative must be within **2.0 world units** of the item.
+  * Triggered using the **[E]** keyboard interaction prompt.
+* **Server Authority & Race Protection**:
+  * The server is authoritative over all loot existence, positions, and claimed states.
+  * Simultaneous collection attempts on the same loot item resolve to a single winner; subsequent attempts receive `lootError` ("Loot has already been collected.").
+* **3D Visuals & Animation**:
+  * Procedural Three.js geometry with continuous gentle rotation and vertical sinusoidal bobbing.
+  * Collected items are instantly hidden and synchronized across all clients.
+* **Light Theme HUDs & Prompts**:
+  * **Vault HUD**: Displays `VAULT: LOCKED` / `OPENING XX%` / `OPEN` with a live progress bar.
+  * **Loot HUD**: Displays real-time counts (`CASH 0/3`, `GOLD 0/2`, `DIAMONDS 0/1`) and accumulated `LOOT VALUE`. *(Note: Scoring and Escape are not implemented yet).*
+  * **Interaction Prompt**: Dynamic floating banner displaying `[E] OPEN VAULT`, `[E] COLLECT CASH ($100)`, etc.
+
+---
+
+## Current Multiplayer Scope & Limitations (Milestone 13)
+
+- **Synchronized in Milestone 13**:
   - Player identities, lobby rooms, role assignment, and lobby ready states.
   - Server-authoritative **Shared Team Plan** (`THIEF`, `HACKER`, `DISTRACTOR`, `ENFORCER`).
   - Strict role-based action validation and planning ready state tracking.
@@ -161,11 +200,16 @@ NODE + EXPRESS + SOCKET.IO SERVER (server/server.js)
   - Server-authoritative **Guards** (movement, routing, investigation state machine, 20 Hz updates).
   - Server-authoritative **Security Cameras** (oscillating FOV scan, state synchronization).
   - Server-authoritative **Alarm System** (0–100% level, 5 danger states, +20/+15 increments, -5/3s decay).
-  - Synchronized detection toasts and Light Theme Alarm HUD.
+  - Server-authoritative **Vault System** (LOCKED, OPENING 5s duration, OPEN, Thief/Hacker authorization, proximity cancellation).
+  - Server-authoritative **Loot System** (6 items: Cash, Gold, Diamonds, proximity checks, duplicate protection, instant network removal).
+  - Synchronized Vault HUD, Loot HUD, and [E] interaction prompts.
   - Crew movement synchronization (12.5 Hz) and remote character interpolation.
-- **Local in Milestone 12**:
-  - 3D rendering, materials, lighting, particle/LED effects, and local countdown timer.
-  - Loot collection, vault opening, escape zones, scoring, and hacker camera disabling will be introduced in subsequent milestones.
+- **Out of Scope in Milestone 13**:
+  - Escape zones and vehicle pickup.
+  - Final win/fail scoring system.
+  - Police response.
+  - Hacker camera disabling.
+  - Combat and subduing guards.
 
 ---
 
@@ -179,30 +223,32 @@ HEIST-60-SECONDS/
 ├── server/               # Multiplayer backend
 │   ├── server.js         # Express + Socket.IO server, 20 Hz simulation loop & handlers
 │   ├── rooms/
-│   │   └── RoomManager.js # Room lifecycle, team planning, authoritative guards, cameras & alarm
+│   │   └── RoomManager.js # Room lifecycle, team planning, authoritative guards, cameras, alarm, vault & loot
 │   └── players/
 │       └── PlayerManager.js
 ├── src/
 │   ├── main.js           # App bootstrap & lobby-game handoff
 │   ├── style.css         # Global Light UI design system & CSS variables
 │   ├── multiplayer/
-│   │   ├── MultiplayerClient.js    # Socket.IO client interface
+│   │   ├── MultiplayerClient.js    # Socket.IO client interface (vault & loot events)
 │   │   ├── MultiplayerState.js     # Client session state
 │   │   └── MultiplayerGameState.js # Crew & guard sync, throttling & remote lerp
 │   ├── game/
-│   │   ├── Game.js       # Three.js scene setup & render loop
+│   │   ├── Game.js       # Three.js scene setup, render loop, [E] interaction handler
 │   │   ├── GameState.js  # Phase tracking
-│   │   ├── Bank.js       # 3D Bank geometry & rooms
+│   │   ├── Bank.js       # 3D Bank geometry, animated vault door
 │   │   ├── NavigationPoints.js
 │   │   ├── GuardRoutes.js
 │   │   └── Constants.js
 │   ├── entities/         # Crew, Guards, SecurityCameras
-│   ├── systems/          # MovementSystem, ActionQueue, ActionSystem, Timer, GuardSystem, CameraSystem, AlarmSystem
+│   ├── systems/          # MovementSystem, ActionQueue, ActionSystem, Timer, GuardSystem, CameraSystem, AlarmSystem, VaultSystem, LootSystem
 │   └── ui/
 │       ├── MultiplayerUI.js # Light theme lobby, name & join modals
 │       ├── PlannerUI.js     # Light theme shared team strategy planner panel
 │       ├── TimerHUD.js      # Light theme countdown timer display
-│       └── AlarmHUD.js      # Light theme shared alarm level & detection HUD
+│       ├── AlarmHUD.js      # Light theme shared alarm level & detection HUD
+│       ├── VaultHUD.js      # Light theme vault status & interaction prompt
+│       └── LootHUD.js       # Light theme team loot collection breakdown
 └── test/
-    └── multiplayer.test.js # 18 automated integration tests for Milestone 12
+    └── multiplayer.test.js # 16 automated integration tests for Milestone 13
 ```
