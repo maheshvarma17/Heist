@@ -864,6 +864,7 @@ export class RoomManager {
       activeEscapes: {},
     };
 
+    room.finalResult = null;
     room.simulationActive = false;
   }
 
@@ -884,6 +885,7 @@ export class RoomManager {
       vault: this.getVaultSnapshot(roomCode),
       loot: this.getLootSnapshot(roomCode),
       escape: this.getEscapeSnapshot(roomCode),
+      finalResult: this.getFinalResultSnapshot(roomCode),
     };
   }
 
@@ -1394,6 +1396,19 @@ export class RoomManager {
       }
     }
 
+    // ── 6. Heist Outcome & Final Result (Milestone 15) ────────
+    let heistCompletedEvent = null;
+    const allConnectedEscaped = room.players.length > 0 && room.players.every(p => !p.connected || room.escape.escapedPlayers.includes(p.id));
+
+    if (allConnectedEscaped && !room.finalResult && room.escape.escapedPlayers.length > 0) {
+      room.finalResult = this.computeFinalResult(room, 'ALL_ESCAPED');
+      room.simulationActive = false;
+      heistCompletedEvent = {
+        roomCode: room.code,
+        result: room.finalResult,
+      };
+    }
+
     return {
       guardUpdates,
       guardEvents,
@@ -1407,6 +1422,7 @@ export class RoomManager {
       escapeCancelledEvents,
       escapeProgressEvents,
       playerEscapedEvents,
+      heistCompletedEvent,
     };
   }
 
@@ -1786,6 +1802,190 @@ export class RoomManager {
   }
 
   /**
+   * Authoritatively compute the Final Result for a heist session.
+   * @param {Object} room
+   * @param {string} [reason='COMPLETED']
+   * @returns {Object}
+   */
+  computeFinalResult(room, reason = 'COMPLETED') {
+    const totalPossibleLoot = LOOT_CONFIGS.reduce((sum, item) => sum + item.value, 0); // $1,300
+    const securedLootValue = room.loot ? room.loot.totalCollectedValue : 0;
+    const lootItems = room.loot ? Object.values(room.loot.items) : [];
+
+    const cashCollected = lootItems.filter(i => i.type === 'CASH' && i.collected).length;
+    const goldCollected = lootItems.filter(i => i.type === 'GOLD' && i.collected).length;
+    const diamondCollected = lootItems.filter(i => i.type === 'DIAMONDS' && i.collected).length;
+
+    const escapedPlayerIds = (room.escape && room.escape.escapedPlayers) ? room.escape.escapedPlayers : [];
+    const operatives = [];
+
+    for (const player of room.players) {
+      const isEscaped = escapedPlayerIds.includes(player.id);
+      const playerLootItems = lootItems.filter(i => i.collected && i.collectedBy === player.id);
+      const playerLootValue = playerLootItems.reduce((sum, i) => sum + i.value, 0);
+
+      operatives.push({
+        id: player.id,
+        name: player.name,
+        role: player.role,
+        status: isEscaped ? 'ESCAPED' : 'INSIDE',
+        lootValue: playerLootValue,
+        lootCount: playerLootItems.length,
+        connected: player.connected !== false,
+      });
+    }
+
+    const escapedCount = operatives.filter(o => o.status === 'ESCAPED').length;
+    const totalPlayers = room.players.length || 1;
+    const allEscaped = escapedCount === totalPlayers;
+    const noneEscaped = escapedCount === 0;
+
+    const alarmLevel = room.alarm ? room.alarm.level : 0;
+    const alarmState = room.alarm ? room.alarm.state : 'NORMAL';
+
+    // Compute Grade & Rating Title
+    let grade = 'F';
+    let ratingTitle = 'BUSTED';
+
+    if (noneEscaped || securedLootValue === 0) {
+      grade = 'F';
+      ratingTitle = 'BUSTED';
+    } else if (allEscaped && securedLootValue === totalPossibleLoot && alarmLevel <= 25) {
+      grade = 'S';
+      ratingTitle = 'PERFECT HEIST';
+    } else if (allEscaped && securedLootValue >= totalPossibleLoot * 0.5 && alarmLevel < 75) {
+      grade = 'A';
+      ratingTitle = 'CLEAN GETAWAY';
+    } else if (escapedCount >= 1 && securedLootValue >= totalPossibleLoot * 0.5) {
+      grade = 'B';
+      ratingTitle = 'PARTIAL SUCCESS';
+    } else if (escapedCount >= 1) {
+      grade = 'C';
+      ratingTitle = 'MESSY ESCAPE';
+    } else {
+      grade = 'F';
+      ratingTitle = 'BUSTED';
+    }
+
+    return {
+      roomCode: room.code,
+      reason,
+      grade,
+      ratingTitle,
+      escapedCount,
+      totalPlayers,
+      allEscaped,
+      operatives,
+      loot: {
+        totalSecured: securedLootValue,
+        totalPossible: totalPossibleLoot,
+        percentage: Math.round((securedLootValue / totalPossibleLoot) * 100),
+        breakdown: {
+          cash: { count: cashCollected, total: 3 },
+          gold: { count: goldCollected, total: 2 },
+          diamonds: { count: diamondCollected, total: 1 },
+        },
+      },
+      stealth: {
+        alarmLevel,
+        alarmState,
+      },
+      timestamp: Date.now(),
+    };
+  }
+
+  /**
+   * Conclude heist authoritatively (e.g. on timeout or manual abort).
+   * @param {string} roomCode
+   * @param {string} [reason='TIMEOUT']
+   * @returns {{ roomCode: string, result: Object }|null}
+   */
+  concludeHeist(roomCode, reason = 'TIMEOUT') {
+    const room = this.getRoom(roomCode);
+    if (!room) return null;
+    if (!room.finalResult) {
+      room.finalResult = this.computeFinalResult(room, reason);
+    }
+    room.simulationActive = false;
+    return {
+      roomCode: room.code,
+      result: room.finalResult,
+    };
+  }
+
+  /**
+   * Get current Final Result snapshot for room.
+   * @param {string} roomCode
+   * @returns {Object|null}
+   */
+  getFinalResultSnapshot(roomCode) {
+    const room = this.getRoom(roomCode);
+    return room ? (room.finalResult ? { ...room.finalResult } : null) : null;
+  }
+
+  /**
+   * Reset the room simulation and status back to PLANNING phase for replay.
+   * @param {string} roomCode
+   * @param {string} socketOrPlayerId
+   * @returns {{ success: boolean, room?: Object, error?: string }}
+   */
+  planAgain(roomCode, socketOrPlayerId) {
+    const room = this.getRoom(roomCode);
+    if (!room) return { success: false, error: 'Room not found.' };
+
+    const player = room.players.find(p => p.socketId === socketOrPlayerId || p.id === socketOrPlayerId);
+    if (!player) return { success: false, error: 'Player not found in room.' };
+
+    // Reset simulation state, vault, loot, alarm, guards, cameras, escape
+    this.resetSimulation(roomCode);
+    room.finalResult = null;
+    room.simulationActive = false;
+    room.phase = 'PLANNING';
+
+    // Reset planning ready flags
+    if (room.planningReady) {
+      for (const p of room.players) {
+        room.planningReady[p.id] = false;
+      }
+    }
+    if (!room.readyStatuses) {
+      room.readyStatuses = {};
+    }
+    for (const p of room.players) {
+      room.readyStatuses[p.id] = false;
+    }
+
+    // Clear and reset team plans
+    room.teamPlan = {
+      THIEF: [],
+      HACKER: [],
+      DISTRACTOR: [],
+      ENFORCER: [],
+    };
+
+    // Reset crew spawn positions and states
+    if (room.crewStates) {
+      for (const p of room.players) {
+        const defaultPos = DEFAULT_SPAWN_POSITIONS[p.role] || { x: 0, y: 0, z: 0 };
+        room.crewStates[p.id] = {
+          playerId: p.id,
+          playerName: p.name,
+          role: p.role,
+          position: { ...defaultPos },
+          rotationY: 0,
+          state: 'IDLE',
+          connected: p.connected !== false,
+        };
+      }
+    }
+
+    return {
+      success: true,
+      room,
+    };
+  }
+
+  /**
    * Formats a clean public room payload for clients.
    * @param {Object} room
    * @returns {Object}
@@ -1809,6 +2009,7 @@ export class RoomManager {
       vault: this.getVaultSnapshot(room.code),
       loot: this.getLootSnapshot(room.code),
       escape: this.getEscapeSnapshot(room.code),
+      finalResult: this.getFinalResultSnapshot(room.code),
     };
   }
 }

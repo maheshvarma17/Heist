@@ -617,3 +617,280 @@ html, body {
     box-shadow: 0 0 0 6px rgba(16, 185, 129, 0);
   }
 }
+
+/* ═══════════════════════════════════════════════════════════════
+   HEIST FINAL RESULT MODAL (Milestone 15)
+   ═══════════════════════════════════════════════════════════════ */
+
+.result-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.45);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9000;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+  padding: 24px;
+}
+
+.result-backdrop.visible {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.result-backdrop.hidden {
+  display: none;
+}
+
+.result-modal {
+  width: 100%;
+  max-width: 680px;
+  background: rgba(255, 255, 255, 0.98);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 25px 50px -12px rgba(15, 23, 42, 0.25), 0 0 0 1px rgba(0, 0, 0, 0.05);
+  padding: 36px 40px;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  transform: translateY(20px) scale(0.96);
+  transition: transform 0.35s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.result-backdrop.visible .result-modal {
+  transform: translateY(0) scale(1);
+}
+
+/* ── Result Header & Grade ──────────────────────────────────── */
+.result-header {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  padding-bottom: 20px;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.result-grade-stamp {
+  width: 72px;
+  height: 72px;
+  border-radius: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-family-mono);
+  font-size: 2.75rem;
+  font-weight: 900;
+  box-shadow: var(--shadow-md);
+  border: 3px solid;
+  flex-shrink: 0;
+}
+
+.grade-s {
+  background: #fef08a;
+  color: #854d0e;
+  border-color: #eab308;
+  box-shadow: 0 0 24px rgba(234, 179, 8, 0.45);
+}
+
+.grade-a {
+  background: #d1fae5;
+  color: #065f46;
+  border-color: #10b981;
+}
+
+.grade-b {
+  background: #e0f2fe;
+  color: #075985;
+  border-color: #0284c7;
+}
+
+.grade-c {
+  background: #fef3c7;
+  color: #92400e;
+  border-color: #f59e0b;
+}
+
+.grade-f {
+  background: #fee2e2;
+  color: #991b1b;
+  border-color: #ef4444;
+}
+
+.result-title-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.result-main-title {
+  font-size: 1.75rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  color: var(--color-text);
+  margin: 0;
+}
+
+.result-subtitle {
+  font-size: 0.9375rem;
+  color: var(--color-text-secondary);
+  margin: 0;
+}
+
+/* ── Operatives Grid ────────────────────────────────────────── */
+.result-section-label {
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--color-text-muted);
+}
+
+.operatives-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  gap: 12px;
+}
+
+.op-result-card {
+  background: var(--color-surface-secondary);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  transition: all var(--transition-fast);
+}
+
+.op-result-card.op-escaped {
+  border-color: rgba(16, 185, 129, 0.4);
+  background: rgba(209, 250, 229, 0.35);
+}
+
+.op-result-card.op-inside {
+  border-color: rgba(239, 68, 68, 0.35);
+  background: rgba(254, 226, 226, 0.35);
+}
+
+.op-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.op-role {
+  font-size: 0.7rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.op-role-thief { color: var(--role-thief); }
+.op-role-hacker { color: var(--role-hacker); }
+.op-role-distractor { color: var(--role-distractor); }
+.op-role-enforcer { color: var(--role-enforcer); }
+
+.op-badge {
+  font-size: 0.65rem;
+  font-weight: 700;
+  padding: 2px 6px;
+  border-radius: var(--radius-full);
+  letter-spacing: 0.02em;
+}
+
+.badge-escaped {
+  background: var(--color-success);
+  color: #ffffff;
+}
+
+.badge-inside {
+  background: var(--color-danger);
+  color: #ffffff;
+}
+
+.op-name {
+  font-size: 0.875rem;
+  font-weight: 700;
+  color: var(--color-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.op-loot {
+  font-size: 0.75rem;
+  font-family: var(--font-family-mono);
+  color: var(--color-text-secondary);
+}
+
+/* ── Result Stats ───────────────────────────────────────────── */
+.result-stats-row {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+}
+
+.result-stat-card {
+  background: var(--color-surface-secondary);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  text-align: center;
+}
+
+.stat-label {
+  font-size: 0.6875rem;
+  font-weight: 700;
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.stat-value {
+  font-family: var(--font-family-mono);
+  font-size: 1.5rem;
+  font-weight: 800;
+  color: var(--color-text);
+}
+
+.stat-sub {
+  font-size: 0.75rem;
+  color: var(--color-text-secondary);
+}
+
+/* ── Color Helpers ──────────────────────────────────────────── */
+.text-success { color: var(--color-success) !important; }
+.text-danger { color: var(--color-danger) !important; }
+.text-warning { color: var(--color-warning) !important; }
+.text-accent { color: var(--color-accent) !important; }
+.text-slate { color: var(--color-text) !important; }
+
+/* ── Result Footer ──────────────────────────────────────────── */
+.result-footer {
+  display: flex;
+  justify-content: center;
+  padding-top: 8px;
+}
+
+.btn-lg {
+  padding: 14px 40px;
+  font-size: 1.0625rem;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  border-radius: var(--radius-full);
+  box-shadow: 0 4px 14px rgba(2, 132, 199, 0.35);
+  cursor: pointer;
+}
+
+.btn-lg:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 20px rgba(2, 132, 199, 0.45);
+}

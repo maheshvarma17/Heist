@@ -612,6 +612,54 @@ io.on('connection', (socket) => {
   });
 
   // ═══════════════════════════════════════════════════════════
+  // HEIST OUTCOME & FINAL RESULT EVENTS (Milestone 15)
+  // ═══════════════════════════════════════════════════════════
+
+  /**
+   * Handle: concludeHeist
+   * Payload: { reason?: string }
+   */
+  socket.on('concludeHeist', ({ reason } = {}) => {
+    if (!player.roomCode) return sendError('You are not in a room.');
+
+    const res = roomManager.concludeHeist(player.roomCode, reason || 'MANUAL');
+    if (res && res.result) {
+      console.log(`[Multiplayer] Heist CONCLUDED by ${player.name} in room ${player.roomCode}: Grade ${res.result.grade} (${res.result.ratingTitle})`);
+      io.to(player.roomCode).emit('heistCompleted', res);
+    }
+  });
+
+  /**
+   * Handle: requestFinalResult
+   */
+  socket.on('requestFinalResult', () => {
+    if (!player.roomCode) return sendError('You are not in a room.');
+    socket.emit('finalResultSnapshot', {
+      roomCode: player.roomCode,
+      result: roomManager.getFinalResultSnapshot(player.roomCode),
+    });
+  });
+
+  /**
+   * Handle: planAgain (Synchronized return to Planning phase)
+   */
+  socket.on('planAgain', () => {
+    if (!player.roomCode) return sendError('You are not in a room.');
+    const res = roomManager.resetSimulation(player.roomCode);
+    if (res) {
+      console.log(`[Multiplayer] Room ${player.roomCode} resetting to PLANNING phase.`);
+      io.to(player.roomCode).emit('alarmUpdated', { level: 0, state: 'NORMAL', source: 'RESET' });
+      io.to(player.roomCode).emit('guardStateSnapshot', { roomCode: player.roomCode, guards: res.guards });
+      io.to(player.roomCode).emit('cameraStateSnapshot', { roomCode: player.roomCode, cameras: res.cameras });
+      io.to(player.roomCode).emit('vaultStateSnapshot', { roomCode: player.roomCode, vault: res.vault });
+      io.to(player.roomCode).emit('lootStateSnapshot', { roomCode: player.roomCode, loot: res.loot });
+      io.to(player.roomCode).emit('escapeStateSnapshot', { roomCode: player.roomCode, escape: res.escape });
+      io.to(player.roomCode).emit('finalResultSnapshot', { roomCode: player.roomCode, result: null });
+      io.to(player.roomCode).emit('planAgainReady', { roomCode: player.roomCode });
+    }
+  });
+
+  // ═══════════════════════════════════════════════════════════
   // CREW MOVEMENT EVENTS (Milestone 10)
   // ═══════════════════════════════════════════════════════════
 
@@ -648,6 +696,60 @@ io.on('connection', (socket) => {
         crew: snapshot,
       });
     }
+  });
+
+  // ═══════════════════════════════════════════════════════════
+  // HEIST OUTCOME & REPLAY EVENTS (Milestone 15)
+  // ═══════════════════════════════════════════════════════════
+
+  /**
+   * Handle: concludeHeist
+   * Payload: { reason?: string }
+   */
+  socket.on('concludeHeist', ({ reason } = {}) => {
+    if (!player.roomCode) return sendError('You are not in a room.');
+
+    const res = roomManager.concludeHeist(player.roomCode, reason || 'TIMEOUT');
+    if (res) {
+      console.log(`[Multiplayer] Heist CONCLUDED in room ${player.roomCode} (Reason: ${res.result.reason}) -> Grade: ${res.result.grade}`);
+      io.to(player.roomCode).emit('heistCompleted', {
+        roomCode: player.roomCode,
+        reason: res.result.reason,
+        result: res.result,
+      });
+    }
+  });
+
+  /**
+   * Handle: requestFinalResult
+   */
+  socket.on('requestFinalResult', () => {
+    if (!player.roomCode) return sendError('You are not in a room.');
+
+    socket.emit('finalResultSnapshot', {
+      roomCode: player.roomCode,
+      finalResult: roomManager.getFinalResultSnapshot(player.roomCode),
+    });
+  });
+
+  /**
+   * Handle: planAgain
+   */
+  socket.on('planAgain', () => {
+    if (!player.roomCode) return sendError('You are not in a room.');
+
+    const res = roomManager.planAgain(player.roomCode, socket.id);
+    if (!res.success) {
+      return sendError(res.error || 'Failed to restart planning phase.');
+    }
+
+    console.log(`[Multiplayer] Room ${res.room.code} restarted to PLANNING phase by host.`);
+    const serialized = roomManager.serializeRoom(res.room);
+    io.to(res.room.code).emit('planAgainReady', {
+      roomCode: res.room.code,
+      room: serialized,
+    });
+    io.to(res.room.code).emit('roomState', serialized);
   });
 
   /**
@@ -772,6 +874,11 @@ setInterval(() => {
       for (const evt of sim.playerEscapedEvents) {
         console.log(`[Multiplayer] Player ${evt.playerName} (${evt.role}) ESCAPED via ${evt.routeName} in room ${code}`);
         io.to(code).emit('playerEscaped', evt);
+      }
+
+      if (sim.heistCompletedEvent) {
+        console.log(`[Multiplayer] Heist COMPLETED in room ${code}: ${sim.heistCompletedEvent.result.grade} (${sim.heistCompletedEvent.result.ratingTitle})`);
+        io.to(code).emit('heistCompleted', sim.heistCompletedEvent);
       }
     }
   }

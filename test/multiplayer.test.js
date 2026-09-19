@@ -322,6 +322,38 @@ ioServer.on('connection', (socket) => {
     }
   });
 
+  // ── Outcome & Replay socket handlers (Milestone 15) ────────
+  socket.on('concludeHeist', ({ reason } = {}) => {
+    const res = roomManager.concludeHeist(player.roomCode, reason || 'TIMEOUT');
+    if (res) {
+      ioServer.to(player.roomCode).emit('heistCompleted', {
+        roomCode: player.roomCode,
+        reason: res.result.reason,
+        result: res.result,
+      });
+    }
+  });
+
+  socket.on('requestFinalResult', () => {
+    socket.emit('finalResultSnapshot', {
+      roomCode: player.roomCode,
+      finalResult: roomManager.getFinalResultSnapshot(player.roomCode),
+    });
+  });
+
+  socket.on('planAgain', () => {
+    const res = roomManager.planAgain(player.roomCode, socket.id);
+    if (!res.success) {
+      return sendError(res.error || 'Failed to restart planning.');
+    }
+    const serialized = roomManager.serializeRoom(res.room);
+    ioServer.to(res.room.code).emit('planAgainReady', {
+      roomCode: res.room.code,
+      room: serialized,
+    });
+    ioServer.to(res.room.code).emit('roomState', serialized);
+  });
+
   socket.on('disconnect', () => {
     const leaveResult = roomManager.leaveRoom(socket.id);
     if (leaveResult.room) {
@@ -400,6 +432,11 @@ const simInterval = setInterval(() => {
       }
       for (const evt of sim.playerEscapedEvents) {
         ioServer.to(code).emit('playerEscaped', evt);
+      }
+
+      // Milestone 15: Heist Completion
+      if (sim.heistCompletedEvent) {
+        ioServer.to(code).emit('heistCompleted', sim.heistCompletedEvent);
       }
     }
   }
@@ -729,8 +766,105 @@ async function runTests() {
     }
     console.log('✓ TEST 19 PASSED: Resetting simulation cleanly restores escape state back to LOCKED with 0 escaped players');
 
+    // ═══════════════════════════════════════════════════════════════
+    // MILESTONE 15 — HEIST OUTCOME & FINAL RESULT TESTS
+    // ═══════════════════════════════════════════════════════════════
+
+    // ── TEST 20: OUTCOME COMPUTATION - GRADE S (PERFECT HEIST) ──
+    // Simulate room with all 4 escaped, 100% loot ($1,300), 0% alarm
+    room.loot.totalCollectedValue = 1300;
+    room.loot.items.cash_01.collected = true;
+    room.loot.items.cash_01.collectedBy = hostPlayer.id;
+    room.loot.items.cash_02.collected = true;
+    room.loot.items.cash_02.collectedBy = hostPlayer.id;
+    room.loot.items.cash_03.collected = true;
+    room.loot.items.cash_03.collectedBy = hostPlayer.id;
+    room.loot.items.gold_01.collected = true;
+    room.loot.items.gold_01.collectedBy = p2.id;
+    room.loot.items.gold_02.collected = true;
+    room.loot.items.gold_02.collectedBy = p2.id;
+    room.loot.items.diamond_01.collected = true;
+    room.loot.items.diamond_01.collectedBy = p3.id;
+
+    room.escape.escapedPlayers = [hostPlayer.id, p2.id, p3.id];
+    room.alarm.level = 10;
+    room.alarm.state = 'NORMAL';
+
+    const gradeSResult = roomManager.computeFinalResult(room, 'ALL_ESCAPED');
+    if (gradeSResult.grade !== 'S' || gradeSResult.ratingTitle !== 'PERFECT HEIST') {
+      throw new Error(`Expected Grade S (PERFECT HEIST), got ${gradeSResult.grade} (${gradeSResult.ratingTitle})`);
+    }
+    if (gradeSResult.loot.totalSecured !== 1300 || gradeSResult.loot.breakdown.cash.count !== 3 || gradeSResult.loot.breakdown.gold.count !== 2 || gradeSResult.loot.breakdown.diamonds.count !== 1) {
+      throw new Error(`Loot breakdown mismatch: ${JSON.stringify(gradeSResult.loot)}`);
+    }
+    console.log('✓ TEST 20 PASSED: Grade S (PERFECT HEIST) awarded for all operatives escaped + 100% loot + low alarm');
+
+    // ── TEST 21: OUTCOME COMPUTATION - TIMEOUT WITH INSIDE OPERATIVES ──
+    // Simulate timeout where only 1 operative escaped and 2 remained inside
+    room.escape.escapedPlayers = [hostPlayer.id]; // p2 and p3 inside
+    room.loot.totalCollectedValue = 600; // partial loot
+    room.alarm.level = 80;
+    room.alarm.state = 'ALARM';
+
+    const timeoutResult = roomManager.computeFinalResult(room, 'TIMEOUT');
+    if (timeoutResult.grade !== 'C' || timeoutResult.ratingTitle !== 'MESSY ESCAPE') {
+      throw new Error(`Expected Grade C (MESSY ESCAPE) for partial escape + high alarm, got ${timeoutResult.grade}`);
+    }
+    
+    const hostOp = timeoutResult.operatives.find((o) => o.id === hostPlayer.id);
+    const p2Op = timeoutResult.operatives.find((o) => o.id === p2.id);
+    if (!hostOp || hostOp.status !== 'ESCAPED') {
+      throw new Error(`Expected host status ESCAPED, got ${JSON.stringify(hostOp)}`);
+    }
+    if (!p2Op || p2Op.status !== 'INSIDE') {
+      throw new Error(`Expected p2 status INSIDE, got ${JSON.stringify(p2Op)}`);
+    }
+    console.log('✓ TEST 21 PASSED: Operatives correctly classified as ESCAPED vs INSIDE on TIMEOUT');
+
+    // ── TEST 22: OUTCOME COMPUTATION - GRADE F (BUSTED) ──
+    // 0 operatives escaped, $0 secured
+    room.escape.escapedPlayers = [];
+    room.loot.totalCollectedValue = 0;
+    const bustedResult = roomManager.computeFinalResult(room, 'TIMEOUT');
+    if (bustedResult.grade !== 'F' || bustedResult.ratingTitle !== 'BUSTED') {
+      throw new Error(`Expected Grade F (BUSTED), got ${bustedResult.grade} (${bustedResult.ratingTitle})`);
+    }
+    console.log('✓ TEST 22 PASSED: Grade F (BUSTED) awarded when 0 operatives escape or 0 loot secured');
+
+    // ── TEST 23: SERVER HEIST COMPLETION & BROADCAST ──
+    // Trigger concludeHeist via socket from host
+    const heistCompletedPromise = waitForEvent(c3, 'heistCompleted');
+    c1.emit('concludeHeist', { reason: 'HOST_CONCLUDED' });
+    const heistEvt = await heistCompletedPromise;
+    if (!heistEvt || !heistEvt.result || !heistEvt.result.grade) {
+      throw new Error(`Invalid heistCompleted payload: ${JSON.stringify(heistEvt)}`);
+    }
+    console.log('✓ TEST 23 PASSED: concludeHeist authoritatively finalizes heist and broadcasts result to all clients');
+
+    // ── TEST 24: REQUEST FINAL RESULT SNAPSHOT ──
+    const snapPromise = waitForEvent(c3, 'finalResultSnapshot');
+    c3.emit('requestFinalResult');
+    const snapData = await snapPromise;
+    if (!snapData.finalResult || snapData.finalResult.grade !== heistEvt.result.grade) {
+      throw new Error(`Mismatch in finalResultSnapshot: ${JSON.stringify(snapData)}`);
+    }
+    console.log('✓ TEST 24 PASSED: requestFinalResult returns latest authoritative outcome snapshot');
+
+    // ── TEST 25: PLAN AGAIN SOCKET FLOW ──
+    // Host requests planAgain
+    const planAgainPromise = waitForEvent(c3, 'planAgainReady');
+    c1.emit('planAgain');
+    const planAgainEvt = await planAgainPromise;
+    if (!planAgainEvt.room || planAgainEvt.room.finalResult !== null) {
+      throw new Error(`Expected reset room with null finalResult, got ${JSON.stringify(planAgainEvt)}`);
+    }
+    if (room.finalResult !== null || room.phase !== 'PLANNING' || room.readyStatuses[hostPlayer.id] !== false) {
+      throw new Error(`Room state not cleanly reset to PLANNING: ${JSON.stringify(room)}`);
+    }
+    console.log('✓ TEST 25 PASSED: planAgain cleanly resets room simulation, finalResult, and returns all players to PLANNING phase');
+
     console.log('\n========================================');
-    console.log('ALL 19 MILESTONE 14 TESTS PASSED!');
+    console.log('ALL 25 MILESTONES 14 & 15 INTEGRATION TESTS PASSED!');
     console.log('========================================\n');
 
   } finally {

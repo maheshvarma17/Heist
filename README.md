@@ -221,9 +221,54 @@ INFILTRATE ➔ REACH VAULT ➔ OPEN VAULT ➔ COLLECT LOOT ➔ ESCAPE UNLOCKED (
 
 ---
 
-## Current Multiplayer Scope & Limitations (Milestone 14)
+## Heist Outcome & Final Result System (Milestone 15)
 
-- **Synchronized in Milestone 14**:
+```
+        ENTER
+          ↓
+       PLAN
+          ↓
+      INFILTRATE
+          ↓
+    AVOID DETECTION
+          ↓
+       VAULT
+          ↓
+        LOOT
+          ↓
+       ESCAPE
+          ↓
+    ┌─────┴─────┐
+    ↓           ↓
+ESCAPED      INSIDE
+    ↓           ↓
+    └─────┬─────┘
+          ↓
+      FINAL RESULT
+```
+
+* **Complete End-to-End Lifecycle**:
+  * Evaluates operatives authoritatively as **`ESCAPED`** (with exit route) vs **`INSIDE`** (left behind when timer expires).
+  * Automatically triggers final conclusion when all connected operatives successfully escape.
+  * Concludes heist on 60-second timeout or host abort.
+* **Authoritative Scoring & Heist Rating Grades**:
+  * **Grade S — PERFECT HEIST**: All operatives ESCAPED + 100% Loot ($1,300 secured: 3 Cash, 2 Gold, 1 Diamond) + Alarm Level ≤ 25%.
+  * **Grade A — CLEAN GETAWAY**: All operatives ESCAPED + ≥ 50% Loot ($650+ secured) + Alarm Level < 75%.
+  * **Grade B — PARTIAL SUCCESS**: ≥ 1 operative ESCAPED + ≥ 50% Loot ($650+ secured).
+  * **Grade C — MESSY ESCAPE**: ≥ 1 operative ESCAPED under high alarm or lower loot.
+  * **Grade F — BUSTED**: 0 operatives ESCAPED or $0 loot secured.
+* **Clean Light-Theme Final Result Modal (`ResultUI.js`)**:
+  * Animated grade stamp badge (S, A, B, C, F) with tailored gold, emerald, sky blue, amber, and coral palettes.
+  * Operative statuses breakdown cards with individual secured loot values and `✓ ESCAPED` / `⚠ INSIDE` badges.
+  * Aggregate statistics: Total Loot Secured ($0–$1,300) with category breakdown, Facility Alarm %, and Team Escape ratio.
+  * Interactive **↻ PLAN AGAIN** replay button that cleanly resets the room simulation, restores character spawn points, and returns all players to the shared Planning phase.
+
+---
+
+## Current Multiplayer Scope & Limitations (Milestone 15)
+
+- **Synchronized in Milestone 15**:
+  - Full end-to-end heist gameplay loop: Enter → Plan → Infiltrate → Avoid Detection → Vault → Loot → Escape → Result.
   - Player identities, lobby rooms, role assignment, and lobby ready states.
   - Server-authoritative **Shared Team Plan** (`THIEF`, `HACKER`, `DISTRACTOR`, `ENFORCER`).
   - Strict role-based action validation and planning ready state tracking.
@@ -234,10 +279,11 @@ INFILTRATE ➔ REACH VAULT ➔ OPEN VAULT ➔ COLLECT LOOT ➔ ESCAPE UNLOCKED (
   - Server-authoritative **Vault System** (LOCKED, OPENING 5s duration, OPEN, Thief/Hacker authorization, proximity cancellation).
   - Server-authoritative **Loot System** (6 items: Cash, Gold, Diamonds, proximity checks, duplicate protection, instant network removal).
   - Server-authoritative **Escape System** (Front Exit & Rooftop Exit, 2.0s confirmation, individual escape tracking, movement/action lock).
-  - Synchronized Vault HUD, Loot HUD, Escape HUD, and [E] interaction prompts.
+  - Server-authoritative **Final Result & Rating System** (S/A/B/C/F grades, ESCAPED vs INSIDE operative classification, loot & stealth metrics).
+  - Synchronized **Plan Again** replay flow resetting simulation and returning room to PLANNING phase.
+  - Synchronized Vault HUD, Loot HUD, Escape HUD, Result UI modal, and [E] interaction prompts.
   - Crew movement synchronization (12.5 Hz) and remote character interpolation.
-- **Out of Scope in Milestone 14**:
-  - Final scoring & end-game summary modal.
+- **Out of Scope in Milestone 15**:
   - Police pursuit vehicle response.
   - Hacker camera disabling.
   - Combat and subduing guards.
@@ -254,18 +300,18 @@ HEIST-60-SECONDS/
 ├── server/               # Multiplayer backend
 │   ├── server.js         # Express + Socket.IO server, 20 Hz simulation loop & handlers
 │   ├── rooms/
-│   │   └── RoomManager.js # Room lifecycle, team planning, authoritative guards, cameras, alarm, vault, loot & escape
+│   │   └── RoomManager.js # Room lifecycle, team planning, authoritative guards, cameras, alarm, vault, loot, escape & final outcome
 │   └── players/
 │       └── PlayerManager.js
 ├── src/
 │   ├── main.js           # App bootstrap & lobby-game handoff
-│   ├── style.css         # Global Light UI design system & CSS variables
+│   ├── style.css         # Global Light UI design system & CSS variables (including Result Modal)
 │   ├── multiplayer/
-│   │   ├── MultiplayerClient.js    # Socket.IO client interface (vault, loot & escape events)
+│   │   ├── MultiplayerClient.js    # Socket.IO client interface (vault, loot, escape & result events)
 │   │   ├── MultiplayerState.js     # Client session state
 │   │   └── MultiplayerGameState.js # Crew & guard sync, throttling & remote lerp
 │   ├── game/
-│   │   ├── Game.js       # Three.js scene setup, render loop, [E] interaction handler
+│   │   ├── Game.js       # Three.js scene setup, render loop, [E] interaction handler, result triggers
 │   │   ├── GameState.js  # Phase tracking
 │   │   ├── Bank.js       # 3D Bank geometry, animated vault door
 │   │   ├── NavigationPoints.js
@@ -280,7 +326,8 @@ HEIST-60-SECONDS/
 │       ├── AlarmHUD.js      # Light theme shared alarm level & detection HUD
 │       ├── VaultHUD.js      # Light theme vault status & interaction prompt
 │       ├── LootHUD.js       # Light theme team loot collection breakdown
-│       └── EscapeHUD.js     # Light theme escape status & team progress HUD
+│       ├── EscapeHUD.js     # Light theme escape status & team progress HUD
+│       └── ResultUI.js      # Light theme glassmorphism Final Result modal overlay
 └── test/
-    └── multiplayer.test.js # 19 automated integration tests for Milestone 14
+    └── multiplayer.test.js # 25 automated integration tests for Milestones 14 & 15
 ```

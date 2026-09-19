@@ -228,6 +228,19 @@ export class MultiplayerClient {
       this._emitLocal('escapeError', data);
     });
 
+    // ─── Heist Outcome & Final Result (Milestone 15) ───────
+    this.socket.on('heistCompleted', (data) => {
+      this._emitLocal('heistCompleted', data);
+    });
+
+    this.socket.on('finalResultSnapshot', (data) => {
+      this._emitLocal('finalResultSnapshot', data);
+    });
+
+    this.socket.on('planAgainReady', (data) => {
+      this._emitLocal('planAgainReady', data);
+    });
+
     this.socket.on('planningError', (data) => {
       this._emitLocal('planningError', data);
     });
@@ -417,6 +430,26 @@ export class MultiplayerClient {
   requestEscapeState() {
     if (this.socket && this.socket.connected) {
       this.socket.emit('requestEscapeState');
+    }
+  }
+
+  // ─── Outcome & Replay Requests (Milestone 15) ───────────
+
+  concludeHeist(reason = 'TIMEOUT') {
+    if (this.socket && this.socket.connected) {
+      this.socket.emit('concludeHeist', { reason });
+    }
+  }
+
+  requestFinalResult() {
+    if (this.socket && this.socket.connected) {
+      this.socket.emit('requestFinalResult');
+    }
+  }
+
+  planAgain() {
+    if (this.socket && this.socket.connected) {
+      this.socket.emit('planAgain');
     }
   }
 

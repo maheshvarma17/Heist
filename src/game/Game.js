@@ -28,6 +28,7 @@ import { AlarmHUD } from '../ui/AlarmHUD.js';
 import { VaultHUD } from '../ui/VaultHUD.js';
 import { LootHUD } from '../ui/LootHUD.js';
 import { EscapeHUD } from '../ui/EscapeHUD.js';
+import { ResultUI } from '../ui/ResultUI.js';
 import { MultiplayerGameState } from '../multiplayer/MultiplayerGameState.js';
 import {
   CAMERA_FOV,
@@ -73,6 +74,7 @@ export class Game {
     this._initVaultHUD();
     this._initLootHUD();
     this._initEscapeHUD();
+    this._initResultUI();
     this._initInput();
     this._initMultiplayerState();
 
@@ -131,6 +133,19 @@ export class Game {
 
   _initEscapeHUD() {
     this.escapeHUD = new EscapeHUD();
+  }
+
+  _initResultUI() {
+    this.resultUI = new ResultUI({
+      onPlanAgain: () => {
+        if (this.multiplayerClient && this.multiplayerClient.state.isConnected) {
+          this.multiplayerClient.planAgain();
+        } else {
+          if (this.resultUI) this.resultUI.hide();
+          this._enterPlanning();
+        }
+      },
+    });
   }
 
   _initInput() {
@@ -389,6 +404,31 @@ export class Game {
           }
         }
       });
+
+      // ─── Heist Outcome & Final Result (Milestone 15) ───────
+      this.multiplayerClient.on('heistCompleted', (data) => {
+        console.log('[HEIST] Heist Completed! Result:', data);
+        this.state.phase = PHASES.RESULT;
+        this.timer.stop();
+        this.actions.abort();
+        if (this.vaultHUD) this.vaultHUD.setPrompt(null);
+        if (this.plannerUI) this.plannerUI.hideStatus();
+        if (this.resultUI) {
+          this.resultUI.show(data.result || data);
+        }
+      });
+
+      this.multiplayerClient.on('finalResultSnapshot', (data) => {
+        if (data.finalResult && this.resultUI) {
+          this.resultUI.show(data.finalResult);
+        }
+      });
+
+      this.multiplayerClient.on('planAgainReady', () => {
+        console.log('[HEIST] Plan Again Ready — Resetting to Planning phase');
+        if (this.resultUI) this.resultUI.hide();
+        this._enterPlanning();
+      });
     }
   }
 
@@ -635,6 +675,11 @@ export class Game {
       this.multiplayerClient.resetSimulation();
     }
 
+    // Hide result modal if open
+    if (this.resultUI) {
+      this.resultUI.hide();
+    }
+
     // Show planner UI, update timer HUD to 60, hide Alarm HUD, Vault HUD, Loot HUD, Escape HUD
     this.plannerUI.show();
     this.plannerUI.hideStatus();
@@ -657,6 +702,10 @@ export class Game {
   /** Transition to EXECUTING phase. */
   _enterExecution() {
     this.state.phase = PHASES.EXECUTING;
+
+    if (this.resultUI) {
+      this.resultUI.hide();
+    }
 
     this.plannerUI.hide();
     this.plannerUI.showStatus('EXECUTING…');
@@ -702,18 +751,11 @@ export class Game {
 
   /** Called when all action queues finish before timeout. */
   _onExecutionComplete() {
-    // Ignore if already timed out
+    // In multiplayer/escape mode, characters stay at their destination allowing escape interaction
     if (this.timer.timedOut) return;
-
-    this.state.phase = PHASES.RESULT;
-    this.timer.stop();
 
     if (this.vaultHUD) this.vaultHUD.setPrompt(null);
     this.plannerUI.hideStatus();
-    this.plannerUI.showComplete({
-      type: 'success',
-      remaining: this.timer.remaining,
-    });
   }
 
   /** Called when the 60-second timer reaches zero. */
@@ -725,7 +767,39 @@ export class Game {
 
     if (this.vaultHUD) this.vaultHUD.setPrompt(null);
     this.plannerUI.hideStatus();
-    this.plannerUI.showComplete({ type: 'timeout' });
+
+    if (this.multiplayerClient && this.multiplayerClient.state.isConnected) {
+      this.multiplayerClient.concludeHeist('TIMEOUT');
+    } else {
+      // Single-player fallback result calculation
+      const securedLoot = this.lootSystem ? this.lootSystem.totalCollectedValue : 0;
+      const isEscaped = this.escapeSystem && this.escapeSystem.escapedPlayers && this.escapeSystem.escapedPlayers.length > 0;
+      const mockResult = {
+        grade: isEscaped ? (securedLoot >= 1300 ? 'S' : (securedLoot >= 650 ? 'A' : 'B')) : 'F',
+        ratingTitle: isEscaped ? (securedLoot >= 1300 ? 'PERFECT HEIST' : 'CLEAN GETAWAY') : 'BUSTED',
+        loot: {
+          totalSecured: securedLoot,
+          totalPossible: 1300,
+          breakdown: this.lootSystem ? this.lootSystem.getStats() : {},
+        },
+        stealth: {
+          alarmLevel: this.alarmSystem ? this.alarmSystem.level : 0,
+          alarmState: this.alarmSystem ? this.alarmSystem.state : 'NORMAL',
+        },
+        operatives: this.crew.members.map((m) => ({
+          id: m.role,
+          role: m.role.toUpperCase(),
+          name: m.role.toUpperCase(),
+          status: (this.escapeSystem && this.escapeSystem.escapedPlayers.includes(m.role)) ? 'ESCAPED' : 'INSIDE',
+          lootValue: m.role === 'thief' ? securedLoot : 0,
+        })),
+        escapedCount: isEscaped ? 1 : 0,
+        totalPlayers: 4,
+      };
+      if (this.resultUI) {
+        this.resultUI.show(mockResult);
+      }
+    }
   }
 
   /* ── Resize Handler ────────────────────────────── */
