@@ -7,7 +7,7 @@ import express from 'express';
 import http from 'http';
 import { Server } from 'socket.io';
 import { PlayerManager } from './players/PlayerManager.js';
-import { RoomManager } from './rooms/RoomManager.js';
+import { RoomManager, ROOM_STATUS } from './rooms/RoomManager.js';
 
 const app = express();
 const server = http.createServer(app);
@@ -208,14 +208,50 @@ io.on('connection', (socket) => {
       return sendError(res.error || 'Cannot start the game.');
     }
 
-    console.log(`[Multiplayer] Starting game in room ${res.room.code}!`);
+    console.log(`[Multiplayer] Starting game in room ${res.room.code}! Initializing crew states.`);
     const serialized = roomManager.serializeRoom(res.room);
 
-    // Broadcast gameStarting to all players in the room
+    // Broadcast gameStarting to all players in the room along with crew snapshot
     io.to(res.room.code).emit('gameStarting', {
       roomCode: res.room.code,
       players: serialized.players,
+      crew: res.crewSnapshot,
     });
+  });
+
+  /**
+   * Handle: crewMove
+   * Payload: { role: string, position: {x, y, z}, rotationY: number, state: string }
+   */
+  socket.on('crewMove', (data = {}) => {
+    if (!player.roomCode) {
+      return sendError('You are not in a room.');
+    }
+
+    const res = roomManager.updateCrewState(player.roomCode, socket.id, data);
+    if (!res.success) {
+      return sendError(res.error || 'Failed to update crew movement.');
+    }
+
+    // Broadcast validated crew movement to all OTHER clients in the room
+    socket.to(player.roomCode).emit('crewMoved', res.crewState);
+  });
+
+  /**
+   * Handle: crewStateRequest
+   */
+  socket.on('crewStateRequest', () => {
+    if (!player.roomCode) {
+      return sendError('You are not in a room.');
+    }
+
+    const snapshot = roomManager.getCrewSnapshot(player.roomCode);
+    if (snapshot) {
+      socket.emit('crewStateSnapshot', {
+        roomCode: player.roomCode,
+        crew: snapshot,
+      });
+    }
   });
 
   /**
@@ -243,13 +279,23 @@ io.on('connection', (socket) => {
         console.log(`[Multiplayer] Room ${leaveResult.room.code} deleted (empty).`);
       } else {
         const serialized = roomManager.serializeRoom(leaveResult.room);
-        io.to(leaveResult.room.code).emit('roomState', serialized);
-        io.to(leaveResult.room.code).emit('playerLeft', {
-          playerId: leaveResult.player ? leaveResult.player.id : null,
-          playerName: leaveResult.player ? leaveResult.player.name : null,
-          newHostId: leaveResult.newHost ? leaveResult.newHost.id : null,
-          room: serialized,
-        });
+        if (leaveResult.room.status === ROOM_STATUS.PLAYING) {
+          // If in-game disconnect, broadcast to remaining players
+          io.to(leaveResult.room.code).emit('playerDisconnectedInGame', {
+            playerId: leaveResult.player ? leaveResult.player.id : null,
+            playerName: leaveResult.player ? leaveResult.player.name : 'Unknown Player',
+            role: leaveResult.player ? leaveResult.player.role : null,
+          });
+        } else {
+          // Lobby disconnect
+          io.to(leaveResult.room.code).emit('roomState', serialized);
+          io.to(leaveResult.room.code).emit('playerLeft', {
+            playerId: leaveResult.player ? leaveResult.player.id : null,
+            playerName: leaveResult.player ? leaveResult.player.name : null,
+            newHostId: leaveResult.newHost ? leaveResult.newHost.id : null,
+            room: serialized,
+          });
+        }
       }
     }
   }

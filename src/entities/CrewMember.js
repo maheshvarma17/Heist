@@ -179,40 +179,94 @@ export class CrewMember {
     // Base class: no accessories
   }
 
-  // ─── Floating Label ────────────────────────────────────
+  // ─── Floating Label & Local Indicator ──────────────────
 
   _buildLabel() {
-    const canvas = document.createElement('canvas');
-    canvas.width  = 256;
-    canvas.height = 64;
-    const ctx = canvas.getContext('2d');
+    this._labelCanvas = document.createElement('canvas');
+    this._labelCanvas.width  = 300;
+    this._labelCanvas.height = 90;
+    this._labelTexture = new THREE.CanvasTexture(this._labelCanvas);
 
-    // Transparent background pill
-    ctx.fillStyle = 'rgba(0, 0, 0, 0.50)';
-    this._canvasRoundRect(ctx, 28, 6, 200, 52, 10);
-    ctx.fill();
-
-    // Role text
-    ctx.font = 'bold 26px Arial, Helvetica, sans-serif';
-    ctx.textAlign    = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillStyle = '#' + this._colors.accent.toString(16).padStart(6, '0');
-    ctx.fillText(this.role.toUpperCase(), 128, 32);
-
-    const texture = new THREE.CanvasTexture(canvas);
     const spriteMat = new THREE.SpriteMaterial({
-      map: texture,
+      map: this._labelTexture,
       transparent: true,
       depthTest: false,
     });
 
     const sprite = new THREE.Sprite(spriteMat);
-    sprite.scale.set(1.3, 0.33, 1);
-    sprite.position.set(0, this._totalHeight + 0.38, 0);
+    sprite.scale.set(1.5, 0.45, 1);
+    sprite.position.set(0, this._totalHeight + 0.42, 0);
     sprite.renderOrder = 999;
 
     this.group.add(sprite);
     this.label = sprite;
+
+    this._drawLabel(this.name, false);
+  }
+
+  /**
+   * Update floating label with player name and local ownership badge.
+   * @param {string} [playerName]
+   * @param {boolean} [isLocal=false]
+   */
+  updatePlayerLabel(playerName, isLocal = false) {
+    this._drawLabel(playerName || this.name, isLocal);
+    this._setLocalIndicator(isLocal);
+  }
+
+  _drawLabel(playerName, isLocal) {
+    if (!this._labelCanvas || !this._labelTexture) return;
+    const ctx = this._labelCanvas.getContext('2d');
+    ctx.clearRect(0, 0, 300, 90);
+
+    const accentHex = '#' + this._colors.accent.toString(16).padStart(6, '0');
+
+    // Background pill (Light theme aesthetic with subtle border)
+    ctx.fillStyle = isLocal ? 'rgba(2, 132, 199, 0.90)' : 'rgba(255, 255, 255, 0.92)';
+    this._canvasRoundRect(ctx, 15, 6, 270, 78, 12);
+    ctx.fill();
+
+    // Border
+    ctx.lineWidth = isLocal ? 3 : 2;
+    ctx.strokeStyle = isLocal ? '#ffffff' : accentHex;
+    ctx.stroke();
+
+    // Role text
+    ctx.font = 'bold 24px Inter, system-ui, Arial, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = isLocal ? '#ffffff' : '#0f172a';
+    
+    const roleText = isLocal ? `${this.role.toUpperCase()} (YOU)` : this.role.toUpperCase();
+    ctx.fillText(roleText, 150, 30);
+
+    // Player name sub-text
+    ctx.font = '600 18px Inter, system-ui, Arial, sans-serif';
+    ctx.fillStyle = isLocal ? '#e0f2fe' : '#475569';
+    ctx.fillText(playerName || this.name, 150, 58);
+
+    this._labelTexture.needsUpdate = true;
+  }
+
+  _setLocalIndicator(isLocal) {
+    if (isLocal) {
+      if (!this._ringMesh) {
+        const ringGeo = new THREE.RingGeometry(0.35, 0.45, 32);
+        const ringMat = new THREE.MeshBasicMaterial({
+          color: 0x0284c7,
+          side: THREE.DoubleSide,
+          transparent: true,
+          opacity: 0.8,
+        });
+        this._ringMesh = new THREE.Mesh(ringGeo, ringMat);
+        this._ringMesh.rotation.x = -Math.PI / 2;
+        this._ringMesh.position.y = 0.02;
+        this.group.add(this._ringMesh);
+      }
+      this._ringMesh.visible = true;
+    } else if (this._ringMesh) {
+      this._ringMesh.visible = false;
+    }
   }
 
   /** Manual roundRect for full browser compatibility. */

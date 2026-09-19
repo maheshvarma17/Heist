@@ -41,6 +41,9 @@ export class PlannerUI {
     this._panel      = null;
     this._overlay    = null;
     this._statusBar  = null;
+    this._cards      = {};             // role -> card <div>
+    this._localRole  = null;
+    this._players    = [];
 
     this._injectStyles();
     this._buildPanel();
@@ -48,6 +51,17 @@ export class PlannerUI {
   }
 
   // ─── Public ────────────────────────────────────────────
+
+  /**
+   * Set local player's role in multiplayer mode to enforce control restrictions.
+   * @param {string|null} localRole
+   * @param {Array} [players=[]]
+   */
+  setLocalRole(localRole, players = []) {
+    this._localRole = localRole ? localRole.toLowerCase() : null;
+    this._players = players;
+    this._rebuildCards();
+  }
 
   /** Show the planning panel (PLANNING phase). */
   show() {
@@ -101,13 +115,13 @@ export class PlannerUI {
     panel.appendChild(title);
 
     // ── Character cards ──
-    const cardsWrap = document.createElement('div');
-    cardsWrap.className = 'planner-cards';
+    this._cardsWrap = document.createElement('div');
+    this._cardsWrap.className = 'planner-cards';
 
     for (const member of this._crew.members) {
-      cardsWrap.appendChild(this._buildCard(member));
+      this._cardsWrap.appendChild(this._buildCard(member));
     }
-    panel.appendChild(cardsWrap);
+    panel.appendChild(this._cardsWrap);
 
     // ── Execute button ──
     const execBtn = document.createElement('button');
@@ -133,22 +147,47 @@ export class PlannerUI {
     this._statusBar = status;
   }
 
+  _rebuildCards() {
+    if (!this._cardsWrap) return;
+    this._cardsWrap.innerHTML = '';
+    for (const member of this._crew.members) {
+      this._cardsWrap.appendChild(this._buildCard(member));
+    }
+    this._refresh();
+  }
+
   _buildCard(member) {
     const role   = member.role;
     const accent = ACCENT[role] ?? '#0284c7';
     const queue  = this._queues.get(role);
 
+    const isOwned = !this._localRole || (role.toLowerCase() === this._localRole);
+    const assignedPlayer = this._players.find(p => p.role === role.toUpperCase());
+    const playerName = assignedPlayer ? assignedPlayer.name : member.name;
+
     const card = document.createElement('div');
-    card.className = 'crew-card';
+    card.className = `crew-card ${isOwned ? 'is-owned' : 'is-remote'}`;
     card.style.setProperty('--card-accent', accent);
+    if (!isOwned) {
+      card.style.opacity = '0.75';
+    }
 
     // ── Header ──
     const header = document.createElement('div');
     header.className = 'card-header';
+    
+    let badgeHtml = '';
+    if (this._localRole) {
+      badgeHtml = isOwned 
+        ? '<span class="badge" style="background:#e0f2fe; color:#0369a1; border:1px solid #bae6fd; font-size:0.65rem;">YOU</span>'
+        : '<span class="badge badge-not-ready" style="font-size:0.65rem;">TEAM</span>';
+    }
+
     header.innerHTML = `
       <span class="accent-dot" style="background:${accent}"></span>
       <span class="card-role">${role.toUpperCase()}</span>
-      <span class="card-name">${member.name}</span>
+      ${badgeHtml}
+      <span class="card-name">${playerName}</span>
     `;
     card.appendChild(header);
 
@@ -162,39 +201,43 @@ export class PlannerUI {
     const controls = document.createElement('div');
     controls.className = 'card-controls';
 
-    // Room selector
-    const select = document.createElement('select');
-    select.className = 'room-select';
-    for (const key of ROOM_KEYS) {
-      const opt = document.createElement('option');
-      opt.value = key;
-      opt.textContent = ROOM_LABELS[key] ?? key;
-      select.appendChild(opt);
+    if (isOwned) {
+      // Room selector
+      const select = document.createElement('select');
+      select.className = 'room-select';
+      for (const key of ROOM_KEYS) {
+        const opt = document.createElement('option');
+        opt.value = key;
+        opt.textContent = ROOM_LABELS[key] ?? key;
+        select.appendChild(opt);
+      }
+
+      // +MOVE button
+      const moveBtn = document.createElement('button');
+      moveBtn.className = 'add-btn move-btn';
+      moveBtn.textContent = '+ MOVE';
+      moveBtn.addEventListener('click', () => {
+        queue.addAction({ type: 'MOVE', target: select.value });
+        this._renderActions(role);
+      });
+
+      // +WAIT button
+      const waitBtn = document.createElement('button');
+      waitBtn.className = 'add-btn wait-btn';
+      waitBtn.textContent = '+ WAIT';
+      waitBtn.addEventListener('click', () => {
+        queue.addAction({ type: 'WAIT', duration: 2 });
+        this._renderActions(role);
+      });
+
+      controls.appendChild(select);
+      controls.appendChild(moveBtn);
+      controls.appendChild(waitBtn);
+    } else {
+      controls.innerHTML = `<span style="font-size: 0.72rem; color: var(--color-text-muted); font-style: italic; padding: 4px 0;">Controlled by ${playerName}</span>`;
     }
 
-    // +MOVE button
-    const moveBtn = document.createElement('button');
-    moveBtn.className = 'add-btn move-btn';
-    moveBtn.textContent = '+ MOVE';
-    moveBtn.addEventListener('click', () => {
-      queue.addAction({ type: 'MOVE', target: select.value });
-      this._renderActions(role);
-    });
-
-    // +WAIT button
-    const waitBtn = document.createElement('button');
-    waitBtn.className = 'add-btn wait-btn';
-    waitBtn.textContent = '+ WAIT';
-    waitBtn.addEventListener('click', () => {
-      queue.addAction({ type: 'WAIT', duration: 2 });
-      this._renderActions(role);
-    });
-
-    controls.appendChild(select);
-    controls.appendChild(moveBtn);
-    controls.appendChild(waitBtn);
     card.appendChild(controls);
-
     return card;
   }
 
@@ -203,14 +246,16 @@ export class PlannerUI {
   _renderActions(role) {
     const list  = this._listEls[role];
     const queue = this._queues.get(role);
+    if (!list || !queue) return;
     const actions = queue.actions; // defensive copy
+    const isOwned = !this._localRole || (role.toLowerCase() === this._localRole);
 
     list.innerHTML = '';
 
     if (actions.length === 0) {
       const empty = document.createElement('div');
       empty.className = 'action-empty';
-      empty.textContent = 'No actions planned';
+      empty.textContent = isOwned ? 'No actions planned' : 'Waiting for orders…';
       list.appendChild(empty);
       return;
     }
@@ -223,17 +268,20 @@ export class PlannerUI {
       label.className = 'action-label';
       label.textContent = `${i + 1}. ${_labelFor(action)}`;
 
-      const removeBtn = document.createElement('button');
-      removeBtn.className = 'remove-btn';
-      removeBtn.textContent = '×';
-      removeBtn.title = 'Remove action';
-      removeBtn.addEventListener('click', () => {
-        queue.removeAction(i);
-        this._renderActions(role);
-      });
-
       row.appendChild(label);
-      row.appendChild(removeBtn);
+
+      if (isOwned) {
+        const removeBtn = document.createElement('button');
+        removeBtn.className = 'remove-btn';
+        removeBtn.textContent = '×';
+        removeBtn.title = 'Remove action';
+        removeBtn.addEventListener('click', () => {
+          queue.removeAction(i);
+          this._renderActions(role);
+        });
+        row.appendChild(removeBtn);
+      }
+
       list.appendChild(row);
     });
   }

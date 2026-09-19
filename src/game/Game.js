@@ -20,6 +20,7 @@ import { Guards } from '../entities/Guards.js';
 import { SecurityCameras } from '../entities/SecurityCameras.js';
 import { PlannerUI } from '../ui/PlannerUI.js';
 import { TimerHUD } from '../ui/TimerHUD.js';
+import { MultiplayerGameState } from '../multiplayer/MultiplayerGameState.js';
 import {
   CAMERA_FOV,
   CAMERA_NEAR,
@@ -37,6 +38,7 @@ export class Game {
   constructor(canvas, options = {}) {
     this.canvas = canvas;
     this.options = options;
+    this.multiplayerClient = options.multiplayerClient || null;
     this.playerContext = options.playerContext || null;
     this.state = new GameState();
     this.clock = new THREE.Clock();
@@ -55,6 +57,7 @@ export class Game {
     this._initTimer();
     this._initPlannerUI();
     this._initTimerHUD();
+    this._initMultiplayerState();
 
     if (options.autoStartPlanner !== false) {
       // Start in PLANNING phase immediately
@@ -65,6 +68,18 @@ export class Game {
     this._onResize(); // set initial size
   }
 
+  _initMultiplayerState() {
+    this.multiplayerGameState = new MultiplayerGameState(
+      this.crew,
+      this.movement,
+      this.multiplayerClient,
+    );
+
+    if (this.playerContext) {
+      this.multiplayerGameState.setPlayerContext(this.playerContext);
+    }
+  }
+
   /**
    * Start or transition to heist planning with player context.
    * @param {Object} [context]
@@ -73,6 +88,12 @@ export class Game {
     if (context) {
       this.playerContext = context;
       console.log('[HEIST] Starting Heist with player identity:', context);
+      if (this.multiplayerGameState) {
+        this.multiplayerGameState.setPlayerContext(context);
+      }
+      if (this.plannerUI) {
+        this.plannerUI.setLocalRole(context.localPlayerRole, context.players || []);
+      }
     }
     this._enterPlanning();
   }
@@ -337,6 +358,11 @@ export class Game {
     // Update systems
     this.movement.update(delta);
     this.actions.update(delta);
+
+    // Update multiplayer network synchronization & remote interpolation
+    if (this.multiplayerGameState) {
+      this.multiplayerGameState.update(delta);
+    }
 
     this.renderer.render(this.scene, this.camera);
   }

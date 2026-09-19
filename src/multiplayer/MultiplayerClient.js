@@ -94,6 +94,18 @@ export class MultiplayerClient {
       this._emitLocal('gameStarting', data);
     });
 
+    this.socket.on('crewMoved', (data) => {
+      this._emitLocal('crewMoved', data);
+    });
+
+    this.socket.on('crewStateSnapshot', (data) => {
+      this._emitLocal('crewStateSnapshot', data);
+    });
+
+    this.socket.on('playerDisconnectedInGame', (data) => {
+      this._emitLocal('playerDisconnectedInGame', data);
+    });
+
     this.socket.on('errorMessage', (data) => {
       this.state.lastError = data.message;
       this._emitLocal('errorMessage', data);
@@ -152,6 +164,18 @@ export class MultiplayerClient {
 
   startGame() {
     this.socket.emit('startGame');
+  }
+
+  sendCrewMove(data) {
+    if (this.socket && this.socket.connected) {
+      this.socket.emit('crewMove', data);
+    }
+  }
+
+  requestCrewState() {
+    if (this.socket && this.socket.connected) {
+      this.socket.emit('crewStateRequest');
+    }
   }
 
   leaveRoom() {

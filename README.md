@@ -46,13 +46,18 @@ npm run dev:client  # Runs Vite frontend on :3000
 ## Multiplayer Architecture
 
 ```
-CLIENT (Browser)
-   │
-   │ (Socket.IO WebSocket Connection)
-   ▼
-NODE + EXPRESS SERVER (server/server.js)
-   ├── ROOM MANAGER (server/rooms/RoomManager.js)
-   └── PLAYER MANAGER (server/players/PlayerManager.js)
+PLAYER BROWSER
+    │
+    │ (Socket.IO WebSocket Connection)
+    ▼
+NODE + EXPRESS + SOCKET.IO SERVER (server/server.js)
+    ├── ROOM MANAGER (server/rooms/RoomManager.js)
+    ├── PLAYER MANAGER (server/players/PlayerManager.js)
+    └── MULTIPLAYER GAME STATE
+            ├── Player 1 → THIEF
+            ├── Player 2 → HACKER
+            ├── Player 3 → DISTRACTOR
+            └── Player 4 → ENFORCER
 ```
 
 ### Flow & Lifecycle:
@@ -66,7 +71,13 @@ NODE + EXPRESS SERVER (server/server.js)
    - Duplicate roles are strictly prohibited and validated on the server.
 5. **Ready System**: Each player toggles their **READY** status.
 6. **Start Heist**: Once all 4 players are present, assigned unique roles, and set to **READY**, the host clicks **START HEIST**.
-7. **Game Transition**: Server broadcasts `gameStarting` with assigned roles, and clients seamlessly transition to the 3D game.
+7. **Game Start & Crew Synchronization**:
+   - Server broadcasts initial `crewStateSnapshot` with spawn coordinates for all 4 crew members.
+   - Each player is granted authoritative control **only** over their assigned crew member.
+   - Planner UI enforces role ownership: players can only assign actions to their owned operative.
+   - Active movement is throttled to ~12.5 Hz across the network, with an immediate authoritative update upon arrival.
+   - Remote characters are smoothly interpolated (`Vector3.lerp`) with natural procedural limb swinging animations.
+   - 3D labels display Role, Player Name, and a distinctive **YOU** badge on the local player's character.
 
 ---
 
@@ -81,11 +92,17 @@ NODE + EXPRESS SERVER (server/server.js)
 
 ---
 
-## Current Multiplayer Scope & Limitations (Milestone 9)
+## Current Multiplayer Scope & Limitations (Milestone 10)
 
-- **Synchronized in Milestone 9**: Player identity, room lifecycle, lobby state, host permissions, role assignments, ready states, and game start handoff.
-- **Local in Milestone 9**: 3D scene rendering, guard patrolling, security camera scanning, detection mathematics, local planning UI, and 60-second timer simulation.
-- Full frame-by-frame entity replication across the network will be introduced in subsequent milestones.
+- **Synchronized in Milestone 10**:
+  - Player identities, lobby rooms, role assignment, and ready states.
+  - Server-validated crew movement and state updates.
+  - 12.5 Hz throttled network transmission and remote interpolation.
+  - Role labels and "YOU" local ownership indicator.
+  - In-game player disconnect broadcasting.
+- **Local in Milestone 10**:
+  - 3D scene rendering, guard patrolling, security camera scanning and detection mathematics, and local 60-second timer simulation.
+  - Synchronized team planning, networked guards/cameras, alarms, and loot will be introduced in subsequent milestones.
 
 ---
 
@@ -97,28 +114,29 @@ HEIST-60-SECONDS/
 ├── package.json          # Dependencies & dev scripts
 ├── vite.config.js        # Vite build configuration
 ├── server/               # Multiplayer backend
-│   ├── server.js         # Express + Socket.IO server
+│   ├── server.js         # Express + Socket.IO server & socket handlers
 │   ├── rooms/
-│   │   └── RoomManager.js
+│   │   └── RoomManager.js # Room lifecycle & authoritative crew states
 │   └── players/
 │       └── PlayerManager.js
 ├── src/
 │   ├── main.js           # App bootstrap & lobby-game handoff
 │   ├── style.css         # Global Light UI design system & CSS variables
 │   ├── multiplayer/
-│   │   ├── MultiplayerClient.js # Socket.IO client interface
-│   │   └── MultiplayerState.js  # Client session state
+│   │   ├── MultiplayerClient.js    # Socket.IO client interface
+│   │   ├── MultiplayerState.js     # Client session state
+│   │   └── MultiplayerGameState.js # Crew sync, throttling & remote lerp
 │   ├── game/
 │   │   ├── Game.js       # Three.js scene setup & render loop
 │   │   ├── GameState.js  # Phase tracking
 │   │   ├── Bank.js       # 3D Bank geometry & rooms
 │   │   ├── NavigationPoints.js
 │   │   └── Constants.js
-│   ├── entities/         # Crew, Guards, SecurityCameras
-│   ├── systems/          # Movement, ActionQueue, Timer, Guards, Cameras
+│   ├── entities/         # Crew (Thief, Hacker, Distractor, Enforcer), Guards, Cameras
+│   ├── systems/          # MovementSystem, ActionQueue, ActionSystem, Timer, Guards, Cameras
 │   └── ui/
 │       ├── MultiplayerUI.js # Light theme lobby, name & join modals
-│       ├── PlannerUI.js     # Light theme strategy planner panel
+│       ├── PlannerUI.js     # Light theme strategy planner panel with role ownership
 │       └── TimerHUD.js      # Light theme countdown timer display
 └── test/
     └── multiplayer.test.js # Automated integration test suite

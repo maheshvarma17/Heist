@@ -14,12 +14,15 @@ if (!canvas) {
   throw new Error('Canvas element #game-canvas not found in the DOM.');
 }
 
-// Initialize 3D game instance (renders atmospheric bank scene behind UI)
-const game = new Game(canvas, { autoStartPlanner: false });
-game.start();
-
-// Initialize Multiplayer Client & UI
+// Initialize Multiplayer Client
 const multiplayerClient = new MultiplayerClient();
+
+// Initialize 3D game instance (renders atmospheric bank scene behind UI)
+const game = new Game(canvas, {
+  autoStartPlanner: false,
+  multiplayerClient,
+});
+game.start();
 
 const multiplayerUI = new MultiplayerUI(multiplayerClient, {
   onGameStart: (context) => {

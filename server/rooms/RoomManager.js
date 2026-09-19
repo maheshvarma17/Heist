@@ -10,6 +10,15 @@ export const ROOM_STATUS = {
 
 export const VALID_ROLES = ['THIEF', 'HACKER', 'DISTRACTOR', 'ENFORCER'];
 
+export const VALID_CREW_STATES = ['IDLE', 'MOVING', 'WAITING', 'EXECUTING', 'COMPLETED'];
+
+export const DEFAULT_SPAWN_POSITIONS = {
+  THIEF:      { x: -4,   y: 0, z: 19.5 },
+  HACKER:     { x: -1.5, y: 0, z: 19.5 },
+  DISTRACTOR: { x: 1.5,  y: 0, z: 19.5 },
+  ENFORCER:   { x: 4,    y: 0, z: 19.5 },
+};
+
 export class RoomManager {
   constructor() {
     /** @type {Map<string, Object>} roomCode -> room */
@@ -45,12 +54,14 @@ export class RoomManager {
     hostPlayer.isReady = false;
     hostPlayer.roomCode = roomCode;
     hostPlayer.role = null;
+    hostPlayer.connected = true;
 
     const room = {
       code: roomCode,
       hostId: hostPlayer.id,
       status: ROOM_STATUS.WAITING,
       players: [hostPlayer],
+      crewStates: {},
       createdAt: Date.now(),
     };
 
@@ -117,6 +128,7 @@ export class RoomManager {
     player.isHost = false;
     player.isReady = false;
     player.role = null;
+    player.connected = true;
     player.roomCode = room.code;
 
     room.players.push(player);
@@ -139,11 +151,23 @@ export class RoomManager {
       if (idx !== -1) {
         affectedRoom = room;
         removedPlayer = room.players[idx];
-        room.players.splice(idx, 1);
-        removedPlayer.roomCode = null;
-        removedPlayer.isHost = false;
-        removedPlayer.role = null;
-        removedPlayer.isReady = false;
+        removedPlayer.connected = false;
+
+        if (room.status === ROOM_STATUS.PLAYING) {
+          // If in active gameplay, mark disconnected in crew state
+          if (room.crewStates[removedPlayer.id]) {
+            room.crewStates[removedPlayer.id].connected = false;
+          }
+          // Remove from active players list
+          room.players.splice(idx, 1);
+        } else {
+          // In lobby, clean up completely
+          room.players.splice(idx, 1);
+          removedPlayer.roomCode = null;
+          removedPlayer.isHost = false;
+          removedPlayer.role = null;
+          removedPlayer.isReady = false;
+        }
 
         if (room.players.length === 0) {
           this.rooms.delete(code);
@@ -226,10 +250,10 @@ export class RoomManager {
   }
 
   /**
-   * Validate and transition room to PLAYING.
+   * Validate and transition room to PLAYING, initializing crew states.
    * @param {string} roomCode
    * @param {string} requesterSocketId
-   * @returns {{ success: boolean, room?: Object, error?: string }}
+   * @returns {{ success: boolean, room?: Object, error?: string, crewSnapshot?: Array }}
    */
   startGame(roomCode, requesterSocketId) {
     const room = this.getRoom(roomCode);
@@ -263,7 +287,104 @@ export class RoomManager {
     }
 
     room.status = ROOM_STATUS.PLAYING;
-    return { success: true, room };
+
+    // Initialize authoritative crew states
+    room.crewStates = {};
+    for (const p of room.players) {
+      const defaultPos = DEFAULT_SPAWN_POSITIONS[p.role] || { x: 0, y: 0, z: 0 };
+      room.crewStates[p.id] = {
+        playerId: p.id,
+        playerName: p.name,
+        role: p.role,
+        position: { ...defaultPos },
+        rotationY: 0,
+        state: 'IDLE',
+        connected: true,
+      };
+    }
+
+    return {
+      success: true,
+      room,
+      crewSnapshot: Object.values(room.crewStates),
+    };
+  }
+
+  /**
+   * Update crew state with authoritative validation.
+   * @param {string} roomCode
+   * @param {string} socketId
+   * @param {Object} data
+   * @returns {{ success: boolean, crewState?: Object, error?: string }}
+   */
+  updateCrewState(roomCode, socketId, data = {}) {
+    const room = this.getRoom(roomCode);
+    if (!room) {
+      return { success: false, error: 'Room not found.' };
+    }
+
+    if (room.status !== ROOM_STATUS.PLAYING) {
+      return { success: false, error: 'Game is not currently active.' };
+    }
+
+    const player = room.players.find(p => p.socketId === socketId);
+    if (!player) {
+      return { success: false, error: 'Player not authorized in this room.' };
+    }
+
+    // Role ownership validation
+    if (data.role && data.role.toUpperCase() !== player.role) {
+      return { success: false, error: `Unauthorized: You do not own role ${data.role}.` };
+    }
+
+    // Coordinate & rotation validation (must be finite numbers within map bounds)
+    const pos = data.position;
+    if (!pos || typeof pos.x !== 'number' || typeof pos.y !== 'number' || typeof pos.z !== 'number') {
+      return { success: false, error: 'Invalid position coordinates.' };
+    }
+
+    if (!Number.isFinite(pos.x) || !Number.isFinite(pos.y) || !Number.isFinite(pos.z)) {
+      return { success: false, error: 'Coordinates must be finite numbers.' };
+    }
+
+    // Bound limits for playable area (generous bounds)
+    if (pos.x < -30 || pos.x > 30 || pos.z < -40 || pos.z > 40 || pos.y < -5 || pos.y > 25) {
+      return { success: false, error: 'Position is out of playable bounds.' };
+    }
+
+    const rotY = typeof data.rotationY === 'number' && Number.isFinite(data.rotationY) ? data.rotationY : 0;
+    const state = VALID_CREW_STATES.includes(data.state) ? data.state : 'IDLE';
+
+    // Update authoritative state
+    const current = room.crewStates[player.id] || {
+      playerId: player.id,
+      playerName: player.name,
+      role: player.role,
+      connected: true,
+    };
+
+    current.position = { x: pos.x, y: pos.y, z: pos.z };
+    current.rotationY = rotY;
+    current.state = state;
+    current.connected = true;
+
+    room.crewStates[player.id] = current;
+
+    return {
+      success: true,
+      crewState: current,
+    };
+  }
+
+  /**
+   * Get crew snapshot list for room.
+   * @param {string} roomCode
+   * @returns {Array|null}
+   */
+  getCrewSnapshot(roomCode) {
+    const room = this.getRoom(roomCode);
+    if (!room || !room.crewStates) return null;
+    return Object.values(room.crewStates);
   }
 
   /**
