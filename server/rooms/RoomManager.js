@@ -32,6 +32,99 @@ export const DEFAULT_SPAWN_POSITIONS = {
   ENFORCER:   { x: 4,    y: 0, z: 19.5 },
 };
 
+export const GUARD_CONFIGS = {
+  lobbyGuard: {
+    id: 'lobbyGuard',
+    name: 'Lobby Guard',
+    speed: 2.5,
+    detectionRange: 7,
+    detectionAngle: Math.PI / 3, // 60°
+    route: [
+      { x: 3, y: 0, z: 17 },
+      { x: 3, y: 0, z: 12 },
+      { x: 5, y: 0, z: -9 },
+      { x: 3, y: 0, z: 12 },
+    ],
+  },
+  vaultGuard: {
+    id: 'vaultGuard',
+    name: 'Vault Guard',
+    speed: 2.0,
+    detectionRange: 6,
+    detectionAngle: Math.PI / 3.5, // ~51°
+    route: [
+      { x: -2, y: 0, z: 4 },
+      { x: -2, y: 0, z: 7 },
+      { x: -5, y: 0, z: -9 },
+      { x: -2, y: 0, z: 7 },
+    ],
+  },
+  securityGuard: {
+    id: 'securityGuard',
+    name: 'Security Guard',
+    speed: 2.2,
+    detectionRange: 8,
+    detectionAngle: Math.PI / 2.8, // ~64°
+    route: [
+      { x: -12, y: 0, z: -2 },
+      { x: -8,  y: 0, z: -5 },
+      { x: -6,  y: 0, z: -10 },
+      { x: -8,  y: 0, z: -5 },
+    ],
+  },
+};
+
+export const CAMERA_CONFIGS = {
+  lobbyCam: {
+    id: 'lobbyCam',
+    name: 'Lobby Camera',
+    position: { x: 5, y: 3, z: 21 },
+    baseYaw: 0,
+    scanAmplitude: Math.PI / 4,
+    scanSpeed: 0.8,
+    detectionRange: 10,
+    fov: Math.PI / 3,
+  },
+  hallwayCam: {
+    id: 'hallwayCam',
+    name: 'Hallway Camera',
+    position: { x: -3, y: 3, z: -11.5 },
+    baseYaw: Math.PI,
+    scanAmplitude: Math.PI / 3,
+    scanSpeed: 0.6,
+    detectionRange: 9,
+    fov: Math.PI / 3,
+  },
+  vaultCam: {
+    id: 'vaultCam',
+    name: 'Vault Camera',
+    position: { x: 5.5, y: 3, z: 5 },
+    baseYaw: Math.PI / 2,
+    scanAmplitude: Math.PI / 4,
+    scanSpeed: 0.7,
+    detectionRange: 8,
+    fov: Math.PI / 3,
+  },
+  securityCam: {
+    id: 'securityCam',
+    name: 'Security Camera',
+    position: { x: -6, y: 3, z: -4 },
+    baseYaw: -(Math.PI / 2),
+    scanAmplitude: Math.PI / 4,
+    scanSpeed: 0.9,
+    detectionRange: 8,
+    fov: Math.PI / 3,
+  },
+};
+
+export const ALARM_THRESHOLDS = {
+  NORMAL: 0,
+  SUSPICIOUS: 25,
+  ALERT: 50,
+  CRITICAL: 75,
+  MAXIMUM: 100,
+};
+
 export class RoomManager {
   constructor() {
     /** @type {Map<string, Object>} roomCode -> room */
@@ -84,6 +177,8 @@ export class RoomManager {
       planningReady: {},
       createdAt: Date.now(),
     };
+
+    this.initRoomSimulationState(room);
 
     this.rooms.set(roomCode, room);
     return room;
@@ -335,11 +430,17 @@ export class RoomManager {
       room.planningReady[p.id] = false;
     }
 
+    // Reset simulation state to clean start
+    this.initRoomSimulationState(room);
+
     return {
       success: true,
       room,
       crewSnapshot: Object.values(room.crewStates),
       teamPlan: room.teamPlan,
+      guards: this.getGuardSnapshot(room.code),
+      cameras: this.getCameraSnapshot(room.code),
+      alarm: this.getAlarmSnapshot(room.code),
     };
   }
 
@@ -505,7 +606,7 @@ export class RoomManager {
    * Start execution of the shared team plan (Host only).
    * @param {string} roomCode
    * @param {string} socketId
-   * @returns {{ success: boolean, teamPlan?: Object, error?: string }}
+   * @returns {{ success: boolean, teamPlan?: Object, guards?: Array, cameras?: Array, alarm?: Object, error?: string }}
    */
   startExecution(roomCode, socketId) {
     const room = this.getRoom(roomCode);
@@ -528,10 +629,16 @@ export class RoomManager {
       return { success: false, error: 'All operatives must be READY before starting execution.' };
     }
 
+    // Activate authoritative simulation loop for execution phase
+    room.simulationActive = true;
+
     return {
       success: true,
       roomCode: room.code,
       teamPlan: room.teamPlan,
+      guards: this.getGuardSnapshot(room.code),
+      cameras: this.getCameraSnapshot(room.code),
+      alarm: this.getAlarmSnapshot(room.code),
     };
   }
 
@@ -623,6 +730,500 @@ export class RoomManager {
   }
 
   /**
+   * Initialize authoritative simulation state for room (Guards, Cameras, Alarm).
+   * @param {Object} room
+   */
+  initRoomSimulationState(room) {
+    room.alarm = {
+      level: 0,
+      state: 'NORMAL',
+      lastDecayTime: Date.now(),
+    };
+
+    room.guards = {};
+    for (const [id, cfg] of Object.entries(GUARD_CONFIGS)) {
+      room.guards[id] = {
+        id: cfg.id,
+        name: cfg.name,
+        speed: cfg.speed,
+        detectionRange: cfg.detectionRange,
+        detectionAngle: cfg.detectionAngle,
+        route: cfg.route.map(p => ({ x: p.x, y: p.y, z: p.z })),
+        state: 'PATROL',
+        patrolIndex: 0,
+        waitTimer: 0,
+        lingerTimer: 0,
+        target: null,
+        position: { x: cfg.route[0].x, y: cfg.route[0].y, z: cfg.route[0].z },
+        rotationY: 0,
+        targetPlayerId: null,
+        lastKnown: null,
+      };
+    }
+
+    room.cameras = {};
+    for (const [id, cfg] of Object.entries(CAMERA_CONFIGS)) {
+      room.cameras[id] = {
+        id: cfg.id,
+        name: cfg.name,
+        position: { ...cfg.position },
+        baseYaw: cfg.baseYaw,
+        scanAmplitude: cfg.scanAmplitude,
+        scanSpeed: cfg.scanSpeed,
+        detectionRange: cfg.detectionRange,
+        fov: cfg.fov,
+        state: 'ACTIVE',
+        phase: 0,
+        currentYaw: cfg.baseYaw,
+        detectedPlayerId: null,
+      };
+    }
+
+    room.activeDetections = {
+      guards: { lobbyGuard: null, vaultGuard: null, securityGuard: null },
+      cameras: { lobbyCam: null, hallwayCam: null, vaultCam: null, securityCam: null },
+    };
+
+    room.simulationActive = false;
+  }
+
+  /**
+   * Reset simulation state back to clean initial state.
+   * @param {string} roomCode
+   * @returns {Object|null}
+   */
+  resetSimulation(roomCode) {
+    const room = this.getRoom(roomCode);
+    if (!room) return null;
+
+    this.initRoomSimulationState(room);
+    return {
+      alarm: room.alarm,
+      guards: this.getGuardSnapshot(roomCode),
+      cameras: this.getCameraSnapshot(roomCode),
+    };
+  }
+
+  /**
+   * Determine alarm state category from 0-100 level.
+   * @param {number} level
+   * @returns {string}
+   */
+  computeAlarmState(level) {
+    if (level >= ALARM_THRESHOLDS.MAXIMUM) return 'MAXIMUM';
+    if (level >= ALARM_THRESHOLDS.CRITICAL) return 'CRITICAL';
+    if (level >= ALARM_THRESHOLDS.ALERT) return 'ALERT';
+    if (level >= ALARM_THRESHOLDS.SUSPICIOUS) return 'SUSPICIOUS';
+    return 'NORMAL';
+  }
+
+  /**
+   * Increase alarm level authoritatively.
+   * @param {Object} room
+   * @param {number} amount
+   * @param {string} source
+   * @param {string} sourceId
+   * @param {string} [playerId]
+   * @param {string} [role]
+   * @returns {Object}
+   */
+  increaseAlarm(room, amount, source, sourceId, playerId = null, role = null) {
+    const prevLevel = room.alarm.level;
+    room.alarm.level = Math.min(100, Math.max(0, room.alarm.level + amount));
+    room.alarm.state = this.computeAlarmState(room.alarm.level);
+    room.alarm.lastDecayTime = Date.now();
+
+    return {
+      level: room.alarm.level,
+      state: room.alarm.state,
+      previousLevel: prevLevel,
+      source,
+      sourceId,
+      playerId,
+      role,
+    };
+  }
+
+  /**
+   * Check if any guard or camera currently has an active detection.
+   * @param {Object} room
+   * @returns {boolean}
+   */
+  hasActiveDetections(room) {
+    if (!room.activeDetections) return false;
+    const gActive = Object.values(room.activeDetections.guards || {}).some(Boolean);
+    const cActive = Object.values(room.activeDetections.cameras || {}).some(Boolean);
+    return gActive || cActive;
+  }
+
+  /**
+   * Perform pure math vision cone check for a guard against crew coordinates.
+   * @param {Object} guard
+   * @param {{ x: number, y: number, z: number }} crewPos
+   * @returns {boolean}
+   */
+  isCrewInGuardVision(guard, crewPos) {
+    const dx = crewPos.x - guard.position.x;
+    const dz = crewPos.z - guard.position.z;
+    const dist = Math.sqrt(dx * dx + dz * dz);
+
+    if (dist > guard.detectionRange) return false;
+    if (dist <= 0.05) return true; // Crew is right next to / overlapping guard
+
+    const yaw = guard.rotationY;
+    const fwdX = -Math.sin(yaw);
+    const fwdZ = -Math.cos(yaw);
+
+    const nx = dx / dist;
+    const nz = dz / dist;
+    const dot = fwdX * nx + fwdZ * nz;
+
+    const halfAngle = guard.detectionAngle / 2;
+    return dot >= Math.cos(halfAngle);
+  }
+
+  /**
+   * Perform pure math vision cone check for a camera against crew coordinates.
+   * @param {Object} cam
+   * @param {{ x: number, y: number, z: number }} crewPos
+   * @returns {boolean}
+   */
+  isCrewInCameraVision(cam, crewPos) {
+    const dx = crewPos.x - cam.position.x;
+    const dz = crewPos.z - cam.position.z;
+    const dist = Math.sqrt(dx * dx + dz * dz);
+
+    if (dist > cam.detectionRange) return false;
+    if (dist <= 0.05) return true;
+
+    const yaw = cam.currentYaw;
+    const fwdX = -Math.sin(yaw);
+    const fwdZ = -Math.cos(yaw);
+
+    const nx = dx / dist;
+    const nz = dz / dist;
+    const dot = fwdX * nx + fwdZ * nz;
+
+    const halfFov = cam.fov / 2;
+    return dot >= Math.cos(halfFov);
+  }
+
+  /**
+   * Tick authoritative simulation (Guards, Cameras, Detections, Alarm Decay).
+   * Runs at ~20 Hz when execution is active.
+   * @param {Object} room
+   * @param {number} dt
+   * @returns {{ guardUpdates: Array, guardEvents: Array, cameraEvents: Array, cameraStateEvents: Array, alarmEvent: Object|null }}
+   */
+  updateSimulation(room, dt) {
+    if (!room || room.status !== ROOM_STATUS.PLAYING || !room.simulationActive) {
+      return { guardUpdates: [], guardEvents: [], cameraEvents: [], cameraStateEvents: [], alarmEvent: null };
+    }
+
+    if (!room.guards || !room.cameras || !room.alarm) {
+      this.initRoomSimulationState(room);
+    }
+
+    const guardUpdates = [];
+    const guardEvents = [];
+    const cameraEvents = [];
+    const cameraStateEvents = [];
+    let alarmEvent = null;
+
+    const connectedCrew = Object.values(room.crewStates || {}).filter(c => c && c.connected && c.position);
+
+    // ── 1. Update Guards ─────────────────────────────────────
+    const ROTATION_SPEED = 6.0;
+    const WAYPOINT_THRESHOLD = 0.3;
+    const PATROL_WAIT = 1.5;
+    const INVESTIGATE_LINGER = 2.5;
+
+    for (const guard of Object.values(room.guards)) {
+      let detectedMember = null;
+      for (const member of connectedCrew) {
+        if (this.isCrewInGuardVision(guard, member.position)) {
+          detectedMember = member;
+          break;
+        }
+      }
+
+      // Handle Guard Detection Events
+      if (detectedMember) {
+        if (room.activeDetections.guards[guard.id] !== detectedMember.playerId) {
+          room.activeDetections.guards[guard.id] = detectedMember.playerId;
+          guard.targetPlayerId = detectedMember.playerId;
+          guard.lastKnown = { ...detectedMember.position };
+          guard.target = { ...detectedMember.position };
+          guard.state = 'INVESTIGATE';
+          guard.lingerTimer = 0;
+
+          const evt = {
+            type: 'GUARD_DETECTED',
+            guardId: guard.id,
+            guardName: guard.name,
+            playerId: detectedMember.playerId,
+            playerName: detectedMember.playerName,
+            role: detectedMember.role,
+          };
+          guardEvents.push(evt);
+
+          // +20 Alarm increment
+          alarmEvent = this.increaseAlarm(room, 20, 'GUARD', guard.id, detectedMember.playerId, detectedMember.role);
+        } else if (guard.state === 'INVESTIGATE') {
+          // Keep updating last known position while still observing the target
+          guard.lastKnown = { ...detectedMember.position };
+        }
+      } else {
+        if (guard.state === 'PATROL' && room.activeDetections.guards[guard.id] !== null) {
+          room.activeDetections.guards[guard.id] = null;
+        }
+      }
+
+      // Guard State Machine
+      switch (guard.state) {
+        case 'PATROL': {
+          if (guard.waitTimer > 0) {
+            guard.waitTimer -= dt;
+          } else {
+            const targetPos = guard.route[guard.patrolIndex];
+            const dx = targetPos.x - guard.position.x;
+            const dz = targetPos.z - guard.position.z;
+            const dist = Math.sqrt(dx * dx + dz * dz);
+
+            if (dist < WAYPOINT_THRESHOLD) {
+              guard.waitTimer = PATROL_WAIT;
+              guard.patrolIndex = (guard.patrolIndex + 1) % guard.route.length;
+            } else {
+              const step = Math.min(guard.speed * dt, dist);
+              guard.position.x += (dx / dist) * step;
+              guard.position.z += (dz / dist) * step;
+
+              const targetAngle = Math.atan2(-dx, -dz);
+              let diff = targetAngle - guard.rotationY;
+              while (diff > Math.PI) diff -= Math.PI * 2;
+              while (diff < -Math.PI) diff += Math.PI * 2;
+              guard.rotationY += Math.sign(diff) * Math.min(Math.abs(diff), ROTATION_SPEED * dt);
+            }
+          }
+          break;
+        }
+
+        case 'INVESTIGATE': {
+          if (guard.target) {
+            const dx = guard.target.x - guard.position.x;
+            const dz = guard.target.z - guard.position.z;
+            const dist = Math.sqrt(dx * dx + dz * dz);
+
+            if (dist < WAYPOINT_THRESHOLD) {
+              guard.target = null;
+              guard.lingerTimer = INVESTIGATE_LINGER;
+            } else {
+              const step = Math.min(guard.speed * dt, dist);
+              guard.position.x += (dx / dist) * step;
+              guard.position.z += (dz / dist) * step;
+
+              const targetAngle = Math.atan2(-dx, -dz);
+              let diff = targetAngle - guard.rotationY;
+              while (diff > Math.PI) diff -= Math.PI * 2;
+              while (diff < -Math.PI) diff += Math.PI * 2;
+              guard.rotationY += Math.sign(diff) * Math.min(Math.abs(diff), ROTATION_SPEED * dt);
+            }
+          } else {
+            guard.lingerTimer -= dt;
+            if (guard.lingerTimer <= 0) {
+              guard.state = 'RETURN';
+              guard.target = null;
+              guard.targetPlayerId = null;
+            }
+          }
+          break;
+        }
+
+        case 'RETURN': {
+          if (!guard.target) {
+            let bestDist = Infinity;
+            let bestIdx = 0;
+            for (let i = 0; i < guard.route.length; i++) {
+              const p = guard.route[i];
+              const d = Math.hypot(p.x - guard.position.x, p.z - guard.position.z);
+              if (d < bestDist) { bestDist = d; bestIdx = i; }
+            }
+            guard.patrolIndex = bestIdx;
+            guard.target = { ...guard.route[bestIdx] };
+          }
+
+          const dx = guard.target.x - guard.position.x;
+          const dz = guard.target.z - guard.position.z;
+          const dist = Math.sqrt(dx * dx + dz * dz);
+
+          if (dist < WAYPOINT_THRESHOLD) {
+            guard.target = null;
+            guard.waitTimer = 0.5;
+            guard.patrolIndex = (guard.patrolIndex + 1) % guard.route.length;
+            guard.state = 'PATROL';
+            room.activeDetections.guards[guard.id] = null;
+          } else {
+            const step = Math.min(guard.speed * dt, dist);
+            guard.position.x += (dx / dist) * step;
+            guard.position.z += (dz / dist) * step;
+
+            const targetAngle = Math.atan2(-dx, -dz);
+            let diff = targetAngle - guard.rotationY;
+            while (diff > Math.PI) diff -= Math.PI * 2;
+            while (diff < -Math.PI) diff += Math.PI * 2;
+            guard.rotationY += Math.sign(diff) * Math.min(Math.abs(diff), ROTATION_SPEED * dt);
+          }
+          break;
+        }
+      }
+
+      guardUpdates.push({
+        guardId: guard.id,
+        name: guard.name,
+        position: {
+          x: Number(guard.position.x.toFixed(3)),
+          y: Number(guard.position.y.toFixed(3)),
+          z: Number(guard.position.z.toFixed(3)),
+        },
+        rotationY: Number(guard.rotationY.toFixed(3)),
+        state: guard.state,
+        targetPlayerId: guard.targetPlayerId,
+      });
+    }
+
+    // ── 2. Update Cameras ────────────────────────────────────
+    for (const cam of Object.values(room.cameras)) {
+      cam.phase += dt * cam.scanSpeed;
+      cam.currentYaw = cam.baseYaw + Math.sin(cam.phase) * cam.scanAmplitude;
+
+      let detectedMember = null;
+      for (const member of connectedCrew) {
+        if (this.isCrewInCameraVision(cam, member.position)) {
+          detectedMember = member;
+          break;
+        }
+      }
+
+      if (detectedMember) {
+        if (cam.state !== 'DETECTING') {
+          cam.state = 'DETECTING';
+          cam.detectedPlayerId = detectedMember.playerId;
+          room.activeDetections.cameras[cam.id] = detectedMember.playerId;
+
+          const evt = {
+            type: 'CAMERA_DETECTED',
+            cameraId: cam.id,
+            cameraName: cam.name,
+            playerId: detectedMember.playerId,
+            playerName: detectedMember.playerName,
+            role: detectedMember.role,
+          };
+          cameraEvents.push(evt);
+
+          cameraStateEvents.push({
+            cameraId: cam.id,
+            state: 'DETECTING',
+            detectedPlayerId: detectedMember.playerId,
+          });
+
+          // +15 Alarm increment
+          alarmEvent = this.increaseAlarm(room, 15, 'CAMERA', cam.id, detectedMember.playerId, detectedMember.role);
+        }
+      } else {
+        if (cam.state === 'DETECTING') {
+          cam.state = 'ACTIVE';
+          cam.detectedPlayerId = null;
+          room.activeDetections.cameras[cam.id] = null;
+
+          cameraStateEvents.push({
+            cameraId: cam.id,
+            state: 'ACTIVE',
+            detectedPlayerId: null,
+          });
+        }
+      }
+    }
+
+    // ── 3. Alarm Decay ───────────────────────────────────────
+    // If no active detections in the room, decay by -5 every 3 seconds
+    if (!this.hasActiveDetections(room) && room.alarm.level > 0) {
+      const now = Date.now();
+      if (now - room.alarm.lastDecayTime >= 3000) {
+        const prevLevel = room.alarm.level;
+        room.alarm.level = Math.max(0, room.alarm.level - 5);
+        room.alarm.state = this.computeAlarmState(room.alarm.level);
+        room.alarm.lastDecayTime = now;
+
+        alarmEvent = {
+          level: room.alarm.level,
+          state: room.alarm.state,
+          previousLevel: prevLevel,
+          source: 'DECAY',
+          sourceId: null,
+          playerId: null,
+          role: null,
+        };
+      }
+    } else if (this.hasActiveDetections(room)) {
+      room.alarm.lastDecayTime = Date.now(); // reset decay timer during active detection
+    }
+
+    return {
+      guardUpdates,
+      guardEvents,
+      cameraEvents,
+      cameraStateEvents,
+      alarmEvent,
+    };
+  }
+
+  /**
+   * Get guard snapshot array for room.
+   * @param {string} roomCode
+   * @returns {Array}
+   */
+  getGuardSnapshot(roomCode) {
+    const room = this.getRoom(roomCode);
+    if (!room || !room.guards) return [];
+    return Object.values(room.guards).map(g => ({
+      guardId: g.id,
+      name: g.name,
+      position: { ...g.position },
+      rotationY: g.rotationY,
+      state: g.state,
+      targetPlayerId: g.targetPlayerId,
+    }));
+  }
+
+  /**
+   * Get camera snapshot array for room.
+   * @param {string} roomCode
+   * @returns {Array}
+   */
+  getCameraSnapshot(roomCode) {
+    const room = this.getRoom(roomCode);
+    if (!room || !room.cameras) return [];
+    return Object.values(room.cameras).map(c => ({
+      cameraId: c.id,
+      name: c.name,
+      position: { ...c.position },
+      baseYaw: c.baseYaw,
+      state: c.state,
+      detectedPlayerId: c.detectedPlayerId,
+    }));
+  }
+
+  /**
+   * Get current alarm state object for room.
+   * @param {string} roomCode
+   * @returns {Object|null}
+   */
+  getAlarmSnapshot(roomCode) {
+    const room = this.getRoom(roomCode);
+    return room && room.alarm ? { ...room.alarm } : { level: 0, state: 'NORMAL' };
+  }
+
+  /**
    * Delete room by code.
    * @param {string} roomCode
    */
@@ -652,6 +1253,8 @@ export class RoomManager {
       })),
       teamPlan: room.teamPlan,
       planningReady: room.planningReady,
+      alarm: room.alarm ? { level: room.alarm.level, state: room.alarm.state } : { level: 0, state: 'NORMAL' },
     };
   }
 }
+

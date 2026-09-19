@@ -218,6 +218,9 @@ io.on('connection', (socket) => {
       players: serialized.players,
       crew: res.crewSnapshot,
       teamPlan: res.teamPlan,
+      guards: res.guards,
+      cameras: res.cameras,
+      alarm: res.alarm,
     });
   });
 
@@ -336,11 +339,89 @@ io.on('connection', (socket) => {
 
     console.log(`[Multiplayer] Starting synchronized heist execution in room ${res.roomCode}!`);
 
-    // Broadcast executionStarting with final synchronized team plan to all 4 clients
+    // Broadcast executionStarting with final synchronized team plan & simulation states to all 4 clients
     io.to(res.roomCode).emit('executionStarting', {
       roomCode: res.roomCode,
       teamPlan: res.teamPlan,
+      guards: res.guards,
+      cameras: res.cameras,
+      alarm: res.alarm,
     });
+
+    io.to(res.roomCode).emit('guardStateSnapshot', {
+      roomCode: res.roomCode,
+      guards: res.guards,
+    });
+
+    io.to(res.roomCode).emit('cameraStateSnapshot', {
+      roomCode: res.roomCode,
+      cameras: res.cameras,
+    });
+
+    io.to(res.roomCode).emit('alarmStateSnapshot', {
+      roomCode: res.roomCode,
+      alarm: res.alarm,
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════
+  // NETWORKED GUARDS, CAMERAS & ALARM (Milestone 12)
+  // ═══════════════════════════════════════════════════════════
+
+  /**
+   * Handle: requestGuardState
+   */
+  socket.on('requestGuardState', () => {
+    if (!player.roomCode) return sendError('You are not in a room.');
+    socket.emit('guardStateSnapshot', {
+      roomCode: player.roomCode,
+      guards: roomManager.getGuardSnapshot(player.roomCode),
+    });
+  });
+
+  /**
+   * Handle: requestCameraState
+   */
+  socket.on('requestCameraState', () => {
+    if (!player.roomCode) return sendError('You are not in a room.');
+    socket.emit('cameraStateSnapshot', {
+      roomCode: player.roomCode,
+      cameras: roomManager.getCameraSnapshot(player.roomCode),
+    });
+  });
+
+  /**
+   * Handle: requestAlarmState
+   */
+  socket.on('requestAlarmState', () => {
+    if (!player.roomCode) return sendError('You are not in a room.');
+    socket.emit('alarmStateSnapshot', {
+      roomCode: player.roomCode,
+      alarm: roomManager.getAlarmSnapshot(player.roomCode),
+    });
+  });
+
+  /**
+   * Handle: resetSimulation (Plan Again)
+   */
+  socket.on('resetSimulation', () => {
+    if (!player.roomCode) return sendError('You are not in a room.');
+    const res = roomManager.resetSimulation(player.roomCode);
+    if (res) {
+      io.to(player.roomCode).emit('alarmUpdated', {
+        level: 0,
+        state: 'NORMAL',
+        source: 'RESET',
+      });
+      io.to(player.roomCode).emit('guardStateSnapshot', {
+        roomCode: player.roomCode,
+        guards: res.guards,
+      });
+      io.to(player.roomCode).emit('cameraStateSnapshot', {
+        roomCode: player.roomCode,
+        cameras: res.cameras,
+      });
+    }
   });
 
   // ═══════════════════════════════════════════════════════════
@@ -428,6 +509,41 @@ io.on('connection', (socket) => {
     }
   }
 });
+
+// ═════════════════════════════════════════════════════════════
+// 20 HZ AUTHORITATIVE ROOM SIMULATION TICK LOOP (Milestone 12)
+// ═════════════════════════════════════════════════════════════
+const SIM_TICK_RATE_HZ = 20;
+const SIM_TICK_INTERVAL_MS = 1000 / SIM_TICK_RATE_HZ; // 50ms
+const DT = 1 / SIM_TICK_RATE_HZ;                      // 0.05s
+
+setInterval(() => {
+  for (const [code, room] of roomManager.rooms.entries()) {
+    if (room.status === ROOM_STATUS.PLAYING && room.simulationActive) {
+      const sim = roomManager.updateSimulation(room, DT);
+
+      if (sim.guardUpdates && sim.guardUpdates.length > 0) {
+        io.to(code).emit('guardMoved', { roomCode: code, guards: sim.guardUpdates });
+      }
+
+      for (const evt of sim.guardEvents) {
+        io.to(code).emit('guardDetected', evt);
+      }
+
+      for (const evt of sim.cameraEvents) {
+        io.to(code).emit('cameraDetected', evt);
+      }
+
+      for (const evt of sim.cameraStateEvents) {
+        io.to(code).emit('cameraStateUpdated', evt);
+      }
+
+      if (sim.alarmEvent) {
+        io.to(code).emit('alarmUpdated', sim.alarmEvent);
+      }
+    }
+  }
+}, SIM_TICK_INTERVAL_MS);
 
 server.listen(PORT, () => {
   console.log(`[HEIST Server] Multiplayer Socket.IO server running on http://localhost:${PORT}`);

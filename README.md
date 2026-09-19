@@ -92,22 +92,80 @@ NODE + EXPRESS + SOCKET.IO SERVER (server/server.js)
 
 ---
 
-## Current Multiplayer Scope & Limitations (Milestone 11)
+## Networked Detection & Alarm System (Milestone 12)
 
-- **Synchronized in Milestone 11**:
+```
+                NODE.JS + SOCKET.IO SERVER (20 Hz Simulation)
+                                │
+        ┌───────────────────────┼───────────────────────┐
+        ↓                       ↓                       ↓
+   ROOM STATE              GUARD STATE             CAMERA STATE
+  (Shared Plan)       (Patrol/Investigate/Return)    (Active/Detecting)
+        │                       │                       │
+        │                       └───────────┬───────────┘
+        │                                   ↓
+        │                           DETECTION ENGINE
+        │                       (Pure distance/FOV math)
+        │                                   │
+        │                                   ↓
+        │                              ALARM STATE
+        │                           (0–100% Shared Level)
+        │                                   │
+        └───────────────────┬───────────────┘
+                            ↓ (Real-time Broadcast)
+             ┌──────────────┼──────────────┐
+             ↓              ↓              ↓
+          PLAYER 1       PLAYER 2      PLAYER 3/4
+             │              │              │
+             └────── Synchronized Game State ──────┘
+```
+
+### Authoritative Guards
+* **Simulation Rate**: 20 Hz (50ms interval) authoritative tick on Node.js server during heist execution.
+* **Patrol Routes**: Predefined multi-waypoint routes (`lobbyGuard`, `vaultGuard`, `securityGuard`).
+* **State Machine**:
+  * `PATROL`: Guards follow assigned waypoints and scan for crew.
+  * `INVESTIGATE`: Triggered when an operative is detected; guard moves to last known position and lingers for 2.5s.
+  * `RETURN`: Moves to nearest patrol waypoint, then resumes `PATROL`.
+* **Client Interpolation**: Smooth `lerp` position and rotation interpolation with walking limb animations on remote clients.
+
+### Authoritative Security Cameras
+* **Scanning Motion**: Sinusoidal yaw sweep (`baseYaw + sin(phase) * scanAmplitude`) computed continuously.
+* **Detection State**: Server computes viewing cone math (`distance <= range` and `dot >= cos(halfFov)`) to toggle `ACTIVE` and `DETECTING`.
+* **Visual Cone & LED**: Synchronized color transitions (Blue/Green for `ACTIVE`, Red for `DETECTING`).
+
+### Shared Alarm System
+* **Shared Team Alarm**: 0% to 100% danger level shared simultaneously across all 4 players.
+* **Detection Increments**:
+  * Guard Spot: **+20%**
+  * Camera Spot: **+15%**
+* **Alarm Levels**:
+  * `0–24%`: **NORMAL** (slate neutral/accent)
+  * `25–49%`: **SUSPICIOUS** (amber warning)
+  * `50–74%`: **ALERT** (orange alert)
+  * `75–99%`: **CRITICAL** (red danger)
+  * `100%`: **MAXIMUM** (pulsing bold danger)
+* **Alarm Decay**: Automatic **-5% every 3 seconds** when no active detections exist in the bank.
+* **Light Theme UI**: Prominent HUD widget displaying percentage, state badge, animated progress bar, and sliding toast alerts (`🚨 GUARD SPOTTED [ROLE]`, `📹 CAMERA DETECTED [ROLE]`).
+* **Plan Again Reset**: Returning to planning resets alarm to 0%, guards to patrol routes, and cameras to active state.
+
+---
+
+## Current Multiplayer Scope & Limitations (Milestone 12)
+
+- **Synchronized in Milestone 12**:
   - Player identities, lobby rooms, role assignment, and lobby ready states.
   - Server-authoritative **Shared Team Plan** (`THIEF`, `HACKER`, `DISTRACTOR`, `ENFORCER`).
-  - Strict role-based action validation: players can only add/remove actions for their assigned role.
-  - Real-time action broadcast (`teamPlanUpdated`) displaying live plans of all 4 teammates in real time.
-  - Separate **Planning Ready** system (`READY FOR HEIST`) tracking all 4 players' readiness.
-  - Synchronized host execution trigger (`EXECUTE HEIST` / `executionStarting`) that kicks off the 60-second heist simultaneously across all clients.
-  - Server-validated crew movement and state updates.
-  - 12.5 Hz throttled network transmission and remote interpolation.
-  - Role labels and "YOU" local ownership indicator.
-  - In-game player disconnect broadcasting.
-- **Local in Milestone 11**:
-  - 3D scene rendering, guard patrolling, security camera scanning and detection mathematics, and local 60-second timer simulation.
-  - Networked guards/cameras, alarms, and loot will be introduced in subsequent milestones.
+  - Strict role-based action validation and planning ready state tracking.
+  - Synchronized host execution start.
+  - Server-authoritative **Guards** (movement, routing, investigation state machine, 20 Hz updates).
+  - Server-authoritative **Security Cameras** (oscillating FOV scan, state synchronization).
+  - Server-authoritative **Alarm System** (0–100% level, 5 danger states, +20/+15 increments, -5/3s decay).
+  - Synchronized detection toasts and Light Theme Alarm HUD.
+  - Crew movement synchronization (12.5 Hz) and remote character interpolation.
+- **Local in Milestone 12**:
+  - 3D rendering, materials, lighting, particle/LED effects, and local countdown timer.
+  - Loot collection, vault opening, escape zones, scoring, and hacker camera disabling will be introduced in subsequent milestones.
 
 ---
 
@@ -119,9 +177,9 @@ HEIST-60-SECONDS/
 ├── package.json          # Dependencies & dev scripts
 ├── vite.config.js        # Vite build configuration
 ├── server/               # Multiplayer backend
-│   ├── server.js         # Express + Socket.IO server & socket handlers
+│   ├── server.js         # Express + Socket.IO server, 20 Hz simulation loop & handlers
 │   ├── rooms/
-│   │   └── RoomManager.js # Room lifecycle, team planning & crew states
+│   │   └── RoomManager.js # Room lifecycle, team planning, authoritative guards, cameras & alarm
 │   └── players/
 │       └── PlayerManager.js
 ├── src/
@@ -130,19 +188,21 @@ HEIST-60-SECONDS/
 │   ├── multiplayer/
 │   │   ├── MultiplayerClient.js    # Socket.IO client interface
 │   │   ├── MultiplayerState.js     # Client session state
-│   │   └── MultiplayerGameState.js # Crew sync, throttling & remote lerp
+│   │   └── MultiplayerGameState.js # Crew & guard sync, throttling & remote lerp
 │   ├── game/
 │   │   ├── Game.js       # Three.js scene setup & render loop
 │   │   ├── GameState.js  # Phase tracking
 │   │   ├── Bank.js       # 3D Bank geometry & rooms
 │   │   ├── NavigationPoints.js
+│   │   ├── GuardRoutes.js
 │   │   └── Constants.js
-│   ├── entities/         # Crew (Thief, Hacker, Distractor, Enforcer), Guards, Cameras
-│   ├── systems/          # MovementSystem, ActionQueue, ActionSystem, Timer, Guards, Cameras
+│   ├── entities/         # Crew, Guards, SecurityCameras
+│   ├── systems/          # MovementSystem, ActionQueue, ActionSystem, Timer, GuardSystem, CameraSystem, AlarmSystem
 │   └── ui/
 │       ├── MultiplayerUI.js # Light theme lobby, name & join modals
 │       ├── PlannerUI.js     # Light theme shared team strategy planner panel
-│       └── TimerHUD.js      # Light theme countdown timer display
+│       ├── TimerHUD.js      # Light theme countdown timer display
+│       └── AlarmHUD.js      # Light theme shared alarm level & detection HUD
 └── test/
-    └── multiplayer.test.js # Automated integration test suite
+    └── multiplayer.test.js # 18 automated integration tests for Milestone 12
 ```

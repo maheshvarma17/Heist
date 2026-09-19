@@ -21,11 +21,15 @@ export class MultiplayerGameState {
    * @param {import('../entities/Crew.js').Crew} crew
    * @param {import('../systems/MovementSystem.js').MovementSystem} movementSystem
    * @param {import('./MultiplayerClient.js').MultiplayerClient} client
+   * @param {import('../entities/Guards.js').Guards} [guards]
+   * @param {import('../entities/SecurityCameras.js').SecurityCameras} [securityCameras]
    */
-  constructor(crew, movementSystem, client) {
+  constructor(crew, movementSystem, client, guards = null, securityCameras = null) {
     this.crew = crew;
     this.movementSystem = movementSystem;
     this.client = client;
+    this.guards = guards;
+    this.securityCameras = securityCameras;
 
     this.localPlayerRole = null;
     this.localPlayerId = null;
@@ -36,6 +40,18 @@ export class MultiplayerGameState {
      * @type {Map<string, { targetPosition: THREE.Vector3, targetRotationY: number, state: string, connected: boolean }>}
      */
     this.remoteStates = new Map();
+
+    /**
+     * Remote guard states. Keyed by guardId ('lobbyGuard', 'vaultGuard', 'securityGuard')
+     */
+    this.remoteGuards = new Map();
+
+    /**
+     * Remote camera states. Keyed by cameraId ('lobbyCam', etc.)
+     */
+    this.remoteCameras = new Map();
+
+    this.alarmState = { level: 0, state: 'NORMAL' };
 
     this._syncTimer = 0;
     this._lastSentPos = new THREE.Vector3();
@@ -94,6 +110,7 @@ export class MultiplayerGameState {
   update(dt) {
     this._updateLocalSync(dt);
     this._updateRemoteInterpolation(dt);
+    this._updateRemoteGuardInterpolation(dt);
   }
 
   /**
@@ -174,6 +191,61 @@ export class MultiplayerGameState {
         this._animateRemoteWalk(member, dt);
       } else {
         this._resetRemoteWalk(member);
+      }
+    }
+  }
+
+  /**
+   * Smoothly interpolate position and rotations for authoritative guards in multiplayer.
+   */
+  _updateRemoteGuardInterpolation(dt) {
+    if (!this.guards) return;
+
+    const GUARD_CONE_COLORS = {
+      PATROL: 0x44ff44,
+      INVESTIGATE: 0xff4444,
+      RETURN: 0xffaa33,
+    };
+
+    for (const [guardId, remote] of this.remoteGuards) {
+      let guard = null;
+      if (guardId === 'lobbyGuard') guard = this.guards.lobbyGuard;
+      else if (guardId === 'vaultGuard') guard = this.guards.vaultGuard;
+      else if (guardId === 'securityGuard') guard = this.guards.securityGuard;
+
+      if (!guard) continue;
+
+      const pos = guard.group.position;
+      const target = remote.targetPosition;
+      const dist = pos.distanceTo(target);
+
+      if (dist > 0.01) {
+        pos.lerp(target, Math.min(1.0, dt * REMOTE_LERP_SPEED));
+      } else {
+        pos.copy(target);
+      }
+
+      let angleDiff = remote.targetRotationY - guard.group.rotation.y;
+      while (angleDiff > Math.PI) angleDiff -= Math.PI * 2;
+      while (angleDiff < -Math.PI) angleDiff += Math.PI * 2;
+
+      if (Math.abs(angleDiff) > 0.01) {
+        const step = Math.sign(angleDiff) * Math.min(Math.abs(angleDiff), ROTATION_SPEED * dt);
+        guard.group.rotation.y += step;
+      } else {
+        guard.group.rotation.y = remote.targetRotationY;
+      }
+
+      // Update cone color to reflect state
+      if (GUARD_CONE_COLORS[remote.state]) {
+        guard.setConeColor(GUARD_CONE_COLORS[remote.state]);
+      }
+
+      // Procedural limb walk animation for guard
+      if (dist > ARRIVAL_THRESHOLD) {
+        this._animateRemoteWalk(guard, dt);
+      } else {
+        this._resetRemoteWalk(guard);
       }
     }
   }
@@ -269,6 +341,92 @@ export class MultiplayerGameState {
           remote.connected = item.connected !== false;
         }
       }
+    });
+
+    this.client.on('guardMoved', (data) => {
+      const guardsList = data.guards || [];
+      for (const g of guardsList) {
+        let remote = this.remoteGuards.get(g.guardId);
+        if (!remote) {
+          remote = {
+            targetPosition: new THREE.Vector3(g.position.x, g.position.y, g.position.z),
+            targetRotationY: g.rotationY,
+            state: g.state,
+            targetPlayerId: g.targetPlayerId,
+          };
+          this.remoteGuards.set(g.guardId, remote);
+        } else {
+          remote.targetPosition.set(g.position.x, g.position.y, g.position.z);
+          remote.targetRotationY = g.rotationY;
+          remote.state = g.state;
+          remote.targetPlayerId = g.targetPlayerId;
+        }
+      }
+    });
+
+    this.client.on('guardStateSnapshot', (data) => {
+      const guardsList = data.guards || [];
+      for (const g of guardsList) {
+        let remote = this.remoteGuards.get(g.guardId);
+        if (!remote) {
+          remote = {
+            targetPosition: new THREE.Vector3(g.position.x, g.position.y, g.position.z),
+            targetRotationY: g.rotationY,
+            state: g.state,
+            targetPlayerId: g.targetPlayerId,
+          };
+          this.remoteGuards.set(g.guardId, remote);
+        } else {
+          remote.targetPosition.set(g.position.x, g.position.y, g.position.z);
+          remote.targetRotationY = g.rotationY;
+          remote.state = g.state;
+          remote.targetPlayerId = g.targetPlayerId;
+        }
+
+        if (this.guards) {
+          let guard = null;
+          if (g.guardId === 'lobbyGuard') guard = this.guards.lobbyGuard;
+          else if (g.guardId === 'vaultGuard') guard = this.guards.vaultGuard;
+          else if (g.guardId === 'securityGuard') guard = this.guards.securityGuard;
+          if (guard) {
+            guard.group.position.set(g.position.x, g.position.y, g.position.z);
+            guard.group.rotation.y = g.rotationY;
+          }
+        }
+      }
+    });
+
+    this.client.on('cameraStateUpdated', (data) => {
+      this.remoteCameras.set(data.cameraId, {
+        state: data.state,
+        detectedPlayerId: data.detectedPlayerId,
+      });
+
+      if (this.securityCameras) {
+        let cam = null;
+        if (data.cameraId === 'lobbyCam') cam = this.securityCameras.lobbyCam;
+        else if (data.cameraId === 'hallwayCam') cam = this.securityCameras.hallwayCam;
+        else if (data.cameraId === 'vaultCam') cam = this.securityCameras.vaultCam;
+        else if (data.cameraId === 'securityCam') cam = this.securityCameras.securityCam;
+
+        if (cam) {
+          if (data.state === 'DETECTING') {
+            cam.setConeColor(0xff4444); // red
+            cam.setLEDColor(0xff0000);  // red
+          } else if (data.state === 'ACTIVE') {
+            cam.setConeColor(0x4488ff); // blue
+            cam.setLEDColor(0x00ff44);  // green
+          } else if (data.state === 'DISABLED') {
+            cam.setConeColor(0x333333); // dark grey
+            cam.setLEDColor(0x333333);
+          }
+        }
+      }
+    });
+
+    this.client.on('alarmUpdated', (data) => {
+      this.alarmState.level = data.level;
+      this.alarmState.state = data.state;
     });
 
     this.client.on('playerDisconnectedInGame', (data) => {

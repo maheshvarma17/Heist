@@ -122,6 +122,38 @@ export class MultiplayerClient {
       this._emitLocal('executionStarting', data);
     });
 
+    this.socket.on('guardMoved', (data) => {
+      this._emitLocal('guardMoved', data);
+    });
+
+    this.socket.on('guardStateSnapshot', (data) => {
+      this._emitLocal('guardStateSnapshot', data);
+    });
+
+    this.socket.on('guardDetected', (data) => {
+      this._emitLocal('guardDetected', data);
+    });
+
+    this.socket.on('cameraStateSnapshot', (data) => {
+      this._emitLocal('cameraStateSnapshot', data);
+    });
+
+    this.socket.on('cameraStateUpdated', (data) => {
+      this._emitLocal('cameraStateUpdated', data);
+    });
+
+    this.socket.on('cameraDetected', (data) => {
+      this._emitLocal('cameraDetected', data);
+    });
+
+    this.socket.on('alarmUpdated', (data) => {
+      this._emitLocal('alarmUpdated', data);
+    });
+
+    this.socket.on('alarmStateSnapshot', (data) => {
+      this._emitLocal('alarmStateSnapshot', data);
+    });
+
     this.socket.on('planningError', (data) => {
       this._emitLocal('planningError', data);
     });
@@ -233,6 +265,32 @@ export class MultiplayerClient {
   startExecution() {
     if (this.socket && this.socket.connected) {
       this.socket.emit('startExecution');
+    }
+  }
+
+  // ─── Guard, Camera & Alarm Requests (Milestone 12) ─────
+
+  requestGuardState() {
+    if (this.socket && this.socket.connected) {
+      this.socket.emit('requestGuardState');
+    }
+  }
+
+  requestCameraState() {
+    if (this.socket && this.socket.connected) {
+      this.socket.emit('requestCameraState');
+    }
+  }
+
+  requestAlarmState() {
+    if (this.socket && this.socket.connected) {
+      this.socket.emit('requestAlarmState');
+    }
+  }
+
+  resetSimulation() {
+    if (this.socket && this.socket.connected) {
+      this.socket.emit('resetSimulation');
     }
   }
 

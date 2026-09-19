@@ -16,10 +16,12 @@ import { ActionSystem } from '../systems/ActionSystem.js';
 import { HeistTimer } from '../systems/HeistTimer.js';
 import { GuardSystem } from '../systems/GuardSystem.js';
 import { CameraSystem } from '../systems/CameraSystem.js';
+import { AlarmSystem } from '../systems/AlarmSystem.js';
 import { Guards } from '../entities/Guards.js';
 import { SecurityCameras } from '../entities/SecurityCameras.js';
 import { PlannerUI } from '../ui/PlannerUI.js';
 import { TimerHUD } from '../ui/TimerHUD.js';
+import { AlarmHUD } from '../ui/AlarmHUD.js';
 import { MultiplayerGameState } from '../multiplayer/MultiplayerGameState.js';
 import {
   CAMERA_FOV,
@@ -55,8 +57,10 @@ export class Game {
     this._initMovement();
     this._initActions();
     this._initTimer();
+    this._initAlarm();
     this._initPlannerUI();
     this._initTimerHUD();
+    this._initAlarmHUD();
     this._initMultiplayerState();
 
     if (options.autoStartPlanner !== false) {
@@ -68,15 +72,56 @@ export class Game {
     this._onResize(); // set initial size
   }
 
+  _initAlarm() {
+    this.alarmSystem = new AlarmSystem({
+      onAlarmChange: (data) => {
+        if (this.alarmHUD) {
+          this.alarmHUD.update(data.level, data.state);
+        }
+      },
+      onDetection: (evt) => {
+        if (this.alarmHUD) {
+          const type = evt.type === 'CAMERA_DETECTED' || evt.source === 'CAMERA' ? 'camera' : 'guard';
+          const name = evt.role ? evt.role.toUpperCase() : 'CREW';
+          const msg = type === 'camera' ? `CAMERA DETECTED ${name}` : `GUARD SPOTTED ${name}`;
+          this.alarmHUD.showDetectionNotification(msg, type);
+        }
+      },
+    });
+  }
+
+  _initAlarmHUD() {
+    this.alarmHUD = new AlarmHUD();
+  }
+
   _initMultiplayerState() {
     this.multiplayerGameState = new MultiplayerGameState(
       this.crew,
       this.movement,
       this.multiplayerClient,
+      this.guards,
+      this.securityCameras,
     );
 
     if (this.playerContext) {
       this.multiplayerGameState.setPlayerContext(this.playerContext);
+    }
+
+    if (this.multiplayerClient) {
+      this.multiplayerClient.on('alarmUpdated', (data) => {
+        this.alarmSystem.setLevel(data.level, data.state);
+        this.alarmHUD.update(data.level, data.state);
+      });
+
+      this.multiplayerClient.on('guardDetected', (data) => {
+        this.alarmSystem.recordDetection(data);
+        this.alarmHUD.showDetectionNotification(`GUARD SPOTTED ${data.role || 'CREW'}`, 'guard');
+      });
+
+      this.multiplayerClient.on('cameraDetected', (data) => {
+        this.alarmSystem.recordDetection(data);
+        this.alarmHUD.showDetectionNotification(`CAMERA DETECTED ${data.role || 'CREW'}`, 'camera');
+      });
     }
   }
 
@@ -187,8 +232,16 @@ export class Game {
     this.guardSystem = new GuardSystem(
       this.guards,
       (guard, member) => {
-        // Detection callback — used by future alarm system
-        console.log(`[HEIST] Detection event: ${guard.name} spotted ${member.name}`);
+        // Single-player fallback detection callback
+        if (!this.multiplayerClient || !this.multiplayerClient.state.isConnected) {
+          console.log(`[HEIST] Detection event (Local): ${guard.name} spotted ${member.name}`);
+          this.alarmSystem.setLevel(this.alarmSystem.level + 20, null, { source: 'GUARD', guardName: guard.name });
+          this.alarmSystem.recordDetection({
+            type: 'GUARD_DETECTED',
+            guardId: guard.name,
+            role: member.role,
+          });
+        }
       },
     );
     this.guardSystem.setCrewMembers(this.crew.members);
@@ -202,8 +255,16 @@ export class Game {
     this.cameraSystem = new CameraSystem(
       this.securityCameras,
       (cam, member) => {
-        // Detection callback — used by future alarm system
-        console.log(`[HEIST] Camera event: ${cam.name} spotted ${member.name}`);
+        // Single-player fallback detection callback
+        if (!this.multiplayerClient || !this.multiplayerClient.state.isConnected) {
+          console.log(`[HEIST] Camera event (Local): ${cam.name} spotted ${member.name}`);
+          this.alarmSystem.setLevel(this.alarmSystem.level + 15, null, { source: 'CAMERA', cameraName: cam.name });
+          this.alarmSystem.recordDetection({
+            type: 'CAMERA_DETECTED',
+            cameraId: cam.name,
+            role: member.role,
+          });
+        }
       },
     );
     this.cameraSystem.setCrewMembers(this.crew.members);
@@ -292,11 +353,21 @@ export class Game {
     // Reset cameras
     this.cameraSystem.reset();
 
-    // Show planner UI, update timer HUD to 60
+    // Reset Alarm
+    this.alarmSystem.reset();
+
+    if (this.multiplayerClient && this.multiplayerClient.state.isConnected) {
+      this.multiplayerClient.resetSimulation();
+    }
+
+    // Show planner UI, update timer HUD to 60, hide Alarm HUD
     this.plannerUI.show();
     this.plannerUI.hideStatus();
     this.timerHUD.update(this.timer.remaining);
     this.timerHUD.show();
+    if (this.alarmHUD) {
+      this.alarmHUD.hide();
+    }
   }
 
   /** Transition to EXECUTING phase. */
@@ -314,6 +385,12 @@ export class Game {
 
     // Reset camera system
     this.cameraSystem.reset();
+
+    // Show Alarm HUD
+    if (this.alarmHUD) {
+      this.alarmHUD.update(this.alarmSystem.level, this.alarmSystem.state);
+      this.alarmHUD.show();
+    }
 
     // Begin executing all action queues
     this.actions.execute(() => this._onExecutionComplete());
@@ -368,15 +445,27 @@ export class Game {
     // Update orbit controls damping
     this.controls.update();
 
-    // Update timer
+    // Update timer & systems
     if (this.state.phase === PHASES.EXECUTING) {
       this.timer.update(delta);
       this.timerHUD.update(this.timer.remaining);
-      this.guardSystem.update(delta);
-      this.cameraSystem.update(delta);
+
+      // In single player, run local guard & camera simulation
+      const isMultiplayerActive = this.multiplayerClient && this.multiplayerClient.state.isConnected;
+      if (!isMultiplayerActive) {
+        this.guardSystem.update(delta);
+        this.cameraSystem.update(delta);
+      } else {
+        // In multiplayer, cameras still oscillate scan visually while server determines detection
+        for (const cam of this.securityCameras.members) {
+          if (!cam._phase) cam._phase = 0;
+          cam._phase += delta * cam.scanSpeed;
+          cam.pivot.rotation.y = cam.baseYaw + Math.sin(cam._phase) * cam.scanAmplitude;
+        }
+      }
     }
 
-    // Update systems
+    // Update movement & actions
     this.movement.update(delta);
     this.actions.update(delta);
 
