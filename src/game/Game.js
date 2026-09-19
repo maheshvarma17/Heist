@@ -15,7 +15,9 @@ import { ActionQueue } from '../systems/ActionQueue.js';
 import { ActionSystem } from '../systems/ActionSystem.js';
 import { HeistTimer } from '../systems/HeistTimer.js';
 import { GuardSystem } from '../systems/GuardSystem.js';
+import { CameraSystem } from '../systems/CameraSystem.js';
 import { Guards } from '../entities/Guards.js';
+import { SecurityCameras } from '../entities/SecurityCameras.js';
 import { PlannerUI } from '../ui/PlannerUI.js';
 import { TimerHUD } from '../ui/TimerHUD.js';
 import {
@@ -44,6 +46,7 @@ export class Game {
     this._initBank();
     this._initCrew();
     this._initGuards();
+    this._initCameras();
     this._initMovement();
     this._initActions();
     this._initTimer();
@@ -153,6 +156,21 @@ export class Game {
     this.guardSystem.setCrewMembers(this.crew.members);
   }
 
+  /* ── Security Cameras ──────────────────────────── */
+  _initCameras() {
+    this.securityCameras = new SecurityCameras();
+    this.securityCameras.addToScene(this.scene);
+
+    this.cameraSystem = new CameraSystem(
+      this.securityCameras,
+      (cam, member) => {
+        // Detection callback — used by future alarm system
+        console.log(`[HEIST] Camera event: ${cam.name} spotted ${member.name}`);
+      },
+    );
+    this.cameraSystem.setCrewMembers(this.crew.members);
+  }
+
   /* ── Movement System ───────────────────────────── */
   _initMovement() {
     this.movement = new MovementSystem();
@@ -212,6 +230,9 @@ export class Game {
     // Reset guards to patrol start
     this.guardSystem.reset();
 
+    // Reset cameras
+    this.cameraSystem.reset();
+
     // Show planner UI, update timer HUD to 60
     this.plannerUI.show();
     this.plannerUI.hideStatus();
@@ -231,6 +252,9 @@ export class Game {
 
     // Reset guard system for a fresh run, then it auto-updates
     this.guardSystem.reset();
+
+    // Reset camera system
+    this.cameraSystem.reset();
 
     // Begin executing all action queues
     this.actions.execute(() => this._onExecutionComplete());
@@ -290,6 +314,7 @@ export class Game {
       this.timer.update(delta);
       this.timerHUD.update(this.timer.remaining);
       this.guardSystem.update(delta);
+      this.cameraSystem.update(delta);
     }
 
     // Update systems
